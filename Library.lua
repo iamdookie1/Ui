@@ -554,20 +554,37 @@ function Library.SendNotification(settings)
         create('UICorner', { CornerRadius = UDim.new(1, 0) }),
     })
 
+    -- Stacked so a long title pushes the body down instead of covering it, and
+    -- the card grows to whatever the wrapped text actually measures.
+    local content = create('Frame', {
+        Name = 'Content',
+        BackgroundTransparency = 1,
+        Position = UDim2.new(0, 16, 0, 7),
+        Size = UDim2.new(1, -24, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        Parent = inner,
+    }, {
+        create('UIListLayout', {
+            Padding = UDim.new(0, 2),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+        }),
+        create('UIPadding', { PaddingBottom = UDim.new(0, 9) }),
+    })
+
     create('TextLabel', {
         Name = 'Title',
         Text = settings.title or 'Notification',
         TextColor3 = Color3.fromRGB(210, 210, 210),
         FontFace = font(Enum.FontWeight.SemiBold),
         TextSize = 13,
-        Size = UDim2.new(1, -24, 0, 18),
-        Position = UDim2.new(0, 16, 0, 6),
+        Size = UDim2.new(1, 0, 0, 0),
         BackgroundTransparency = 1,
         TextXAlignment = Enum.TextXAlignment.Left,
-        TextYAlignment = Enum.TextYAlignment.Center,
+        TextYAlignment = Enum.TextYAlignment.Top,
         TextWrapped = true,
         AutomaticSize = Enum.AutomaticSize.Y,
-        Parent = inner,
+        LayoutOrder = 1,
+        Parent = content,
     })
 
     create('TextLabel', {
@@ -576,21 +593,14 @@ function Library.SendNotification(settings)
         TextColor3 = Theme.SubText,
         FontFace = font(Enum.FontWeight.Regular),
         TextSize = 12,
-        Size = UDim2.new(1, -24, 0, 16),
-        Position = UDim2.new(0, 16, 0, 26),
+        Size = UDim2.new(1, 0, 0, 0),
         BackgroundTransparency = 1,
         TextXAlignment = Enum.TextXAlignment.Left,
         TextYAlignment = Enum.TextYAlignment.Top,
         TextWrapped = true,
         AutomaticSize = Enum.AutomaticSize.Y,
-        Parent = inner,
-    })
-
-    create('Frame', {
-        Name = 'Spacer',
-        Size = UDim2.new(1, 0, 0, 50),
-        BackgroundTransparency = 1,
-        Parent = inner,
+        LayoutOrder = 2,
+        Parent = content,
     })
 
     local progress = create('Frame', {
@@ -1182,14 +1192,16 @@ function Library:create_tab(title, icon)
     })
 
     local function make_section(name, x_scale)
-        return create('ScrollingFrame', {
+        local section = create('ScrollingFrame', {
             Name = name,
             AutomaticCanvasSize = Enum.AutomaticSize.Y,
-            ScrollBarThickness = 0,
+            ScrollingDirection = Enum.ScrollingDirection.Y,
+            ScrollBarThickness = 2,
+            ScrollBarImageColor3 = Theme.Accent,
+            ScrollBarImageTransparency = 0.7,
             Size = UDim2.fromOffset(243, 445),
             Selectable = false,
             AnchorPoint = Vector2.new(0, 0.5),
-            ScrollBarImageTransparency = 1,
             BackgroundTransparency = 1,
             Position = UDim2.fromScale(x_scale, 0.5),
             BorderSizePixel = 0,
@@ -1204,9 +1216,11 @@ function Library:create_tab(title, icon)
             }),
             create('UIPadding', {
                 PaddingTop = UDim.new(0, 1),
-                PaddingBottom = UDim.new(0, 6),
+                PaddingBottom = UDim.new(0, 12),
             }),
         })
+        register_accent(section, { 'ScrollBarImageColor3' })
+        return section
     end
 
     local left_section = make_section('LeftSection', 0.259)
@@ -1227,10 +1241,10 @@ function Library:create_tab(title, icon)
     function TabManager:create_module(settings)
         settings = settings or {}
         local element_order = 0
+        local HEADER_HEIGHT = 93
         local ModuleManager = {
             _state = false,
             _size = 0,
-            _multiplier = 0,
         }
         local section = settings.section == 'right' and right_section or left_section
 
@@ -1390,55 +1404,65 @@ function Library:create_tab(title, icon)
             Parent = header,
         })
 
+        local options_padding = create('UIPadding', {
+            PaddingTop = UDim.new(0, 8),
+            PaddingBottom = UDim.new(0, 8),
+        })
+        local options_layout = create('UIListLayout', {
+            Padding = UDim.new(0, 5),
+            HorizontalAlignment = Enum.HorizontalAlignment.Center,
+            SortOrder = Enum.SortOrder.LayoutOrder,
+        })
         local options = create('Frame', {
             Name = 'Options',
             BackgroundTransparency = 1,
-            Size = UDim2.fromOffset(241, 8),
+            Size = UDim2.fromOffset(241, 16),
             BorderSizePixel = 0,
             LayoutOrder = 1,
             Parent = module_frame,
         }, {
-            create('UIPadding', { PaddingTop = UDim.new(0, 8) }),
-            create('UIListLayout', {
-                Padding = UDim.new(0, 5),
-                HorizontalAlignment = Enum.HorizontalAlignment.Center,
-                SortOrder = Enum.SortOrder.LayoutOrder,
-            }),
+            options_padding,
+            options_layout,
         })
 
-        -- Height bookkeeping: _size is the settled content height, _multiplier
-        -- is the temporary extra height while a dropdown/picker is unfolded.
-        function ModuleManager:_grow(amount)
-            if self._size == 0 then
-                self._size = 11
+        -- Module height is derived from what the elements actually measure, not
+        -- from per-element guesses. Anything that auto-sizes (a wrapped
+        -- paragraph, a growing dropdown) reports a new AbsoluteContentSize and
+        -- the card resizes to fit it, so content can never be clipped.
+        function ModuleManager:_content_height()
+            local content = options_layout.AbsoluteContentSize.Y
+            if content <= 0 then
+                return 0
             end
-            self._size += amount
-            if self._state then
-                module_frame.Size = UDim2.fromOffset(241, 93 + self._size + self._multiplier)
-            end
-            options.Size = UDim2.fromOffset(241, self._size)
+            return content + options_padding.PaddingTop.Offset + options_padding.PaddingBottom.Offset
         end
 
-        function ModuleManager:_refresh(animated)
-            local module_height = self._state and (93 + self._size + self._multiplier) or 93
-            local options_height = self._size + self._multiplier
+        function ModuleManager:_refresh(animated, duration)
+            local content = self:_content_height()
+            self._size = content
+            options.Size = UDim2.fromOffset(241, content)
+            local module_height = HEADER_HEIGHT + (self._state and content or 0)
             if animated then
-                tween(module_frame, { Size = UDim2.fromOffset(241, module_height) }, 0.5)
-                tween(options, { Size = UDim2.fromOffset(241, options_height) }, 0.5)
+                tween(module_frame, { Size = UDim2.fromOffset(241, module_height) }, duration or 0.5)
             else
                 module_frame.Size = UDim2.fromOffset(241, module_height)
-                options.Size = UDim2.fromOffset(241, options_height)
             end
         end
+
+        -- Follow content changes closely enough to look attached, slow enough
+        -- to read as an animation while a dropdown unfolds.
+        Connections:add(options_layout:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(function()
+            ModuleManager:_refresh(true, 0.12)
+        end))
 
         function ModuleManager:change_state(state)
             self._state = state
             if self._state then
-                tween(module_frame, { Size = UDim2.fromOffset(241, 93 + self._size + self._multiplier) }, 0.5)
+                tween(module_frame, { Size = UDim2.fromOffset(241, HEADER_HEIGHT + self:_content_height()) }, 0.5)
                 tween(toggle, { BackgroundColor3 = Theme.Accent }, 0.5)
                 tween(circle, { BackgroundColor3 = Theme.Accent, Position = UDim2.fromScale(0.53, 0.5) }, 0.5)
             else
-                tween(module_frame, { Size = UDim2.fromOffset(241, 93) }, 0.5)
+                tween(module_frame, { Size = UDim2.fromOffset(241, HEADER_HEIGHT) }, 0.5)
                 tween(toggle, { BackgroundColor3 = Color3.new(0, 0, 0) }, 0.5)
                 tween(circle, { BackgroundColor3 = Theme.ToggleOff, Position = UDim2.fromScale(0, 0.5) }, 0.5)
             end
@@ -1548,47 +1572,56 @@ function Library:create_tab(title, icon)
         function ModuleManager:create_paragraph(element_settings)
             element_settings = element_settings or {}
             local ParagraphManager = {}
-            self:_grow(element_settings.customScale or 70)
 
             local paragraph = create('Frame', {
                 Name = 'Paragraph',
                 BackgroundColor3 = Theme.Element,
                 BackgroundTransparency = 0.1,
-                Size = UDim2.fromOffset(207, 30),
+                Size = UDim2.fromOffset(207, 0),
                 BorderSizePixel = 0,
                 AutomaticSize = Enum.AutomaticSize.Y,
                 LayoutOrder = next_order(),
                 Parent = options,
             }, {
                 create('UICorner', { CornerRadius = UDim.new(0, 4) }),
+                create('UIPadding', {
+                    PaddingTop = UDim.new(0, 6),
+                    PaddingBottom = UDim.new(0, 6),
+                    PaddingLeft = UDim.new(0, 6),
+                    PaddingRight = UDim.new(0, 6),
+                }),
+                create('UIListLayout', {
+                    Padding = UDim.new(0, 2),
+                    SortOrder = Enum.SortOrder.LayoutOrder,
+                }),
             })
 
             local title_label = create('TextLabel', {
                 FontFace = font(Enum.FontWeight.SemiBold),
                 TextColor3 = Color3.fromRGB(210, 210, 210),
                 Text = element_settings.title or 'Title',
-                Size = UDim2.new(1, -10, 0, 20),
-                Position = UDim2.fromOffset(5, 5),
+                Size = UDim2.new(1, 0, 0, 0),
                 BackgroundTransparency = 1,
                 TextXAlignment = Enum.TextXAlignment.Left,
-                TextYAlignment = Enum.TextYAlignment.Center,
+                TextYAlignment = Enum.TextYAlignment.Top,
                 TextSize = 12,
                 TextWrapped = true,
                 AutomaticSize = Enum.AutomaticSize.Y,
+                LayoutOrder = 1,
                 Parent = paragraph,
             })
 
             local body_label = create('TextLabel', {
                 FontFace = font(Enum.FontWeight.Regular),
                 TextColor3 = Theme.SubText,
-                Size = UDim2.new(1, -10, 0, 20),
-                Position = UDim2.fromOffset(5, 30),
+                Size = UDim2.new(1, 0, 0, 0),
                 BackgroundTransparency = 1,
                 TextXAlignment = Enum.TextXAlignment.Left,
                 TextYAlignment = Enum.TextYAlignment.Top,
                 TextSize = 11,
                 TextWrapped = true,
                 AutomaticSize = Enum.AutomaticSize.Y,
+                LayoutOrder = 2,
                 Parent = paragraph,
             })
             if element_settings.rich then
@@ -1623,26 +1656,31 @@ function Library:create_tab(title, icon)
         function ModuleManager:create_text(element_settings)
             element_settings = element_settings or {}
             local TextManager = {}
-            self:_grow(element_settings.customScale or 50)
 
             local text_frame = create('Frame', {
                 Name = 'Text',
                 BackgroundColor3 = Theme.Element,
                 BackgroundTransparency = 0.1,
-                Size = UDim2.fromOffset(207, element_settings.CustomYSize or 30),
+                Size = UDim2.fromOffset(207, element_settings.CustomYSize or 0),
                 BorderSizePixel = 0,
                 AutomaticSize = Enum.AutomaticSize.Y,
                 LayoutOrder = next_order(),
                 Parent = options,
             }, {
                 create('UICorner', { CornerRadius = UDim.new(0, 4) }),
+                create('UIPadding', {
+                    PaddingTop = UDim.new(0, 5),
+                    PaddingBottom = UDim.new(0, 5),
+                    PaddingLeft = UDim.new(0, 6),
+                    PaddingRight = UDim.new(0, 6),
+                }),
+                create('UIListLayout', { SortOrder = Enum.SortOrder.LayoutOrder }),
             })
 
             local body_label = create('TextLabel', {
                 FontFace = font(Enum.FontWeight.Regular),
                 TextColor3 = Theme.SubText,
-                Size = UDim2.new(1, -10, 1, 0),
-                Position = UDim2.fromOffset(5, 5),
+                Size = UDim2.new(1, 0, 0, 0),
                 BackgroundTransparency = 1,
                 TextXAlignment = Enum.TextXAlignment.Left,
                 TextYAlignment = Enum.TextYAlignment.Top,
@@ -1680,7 +1718,6 @@ function Library:create_tab(title, icon)
         function ModuleManager:create_textbox(element_settings)
             element_settings = element_settings or {}
             local TextboxManager = { _text = '' }
-            self:_grow(32)
 
             create('TextLabel', {
                 FontFace = font(Enum.FontWeight.SemiBold),
@@ -1743,7 +1780,6 @@ function Library:create_tab(title, icon)
         function ModuleManager:create_checkbox(element_settings)
             element_settings = element_settings or {}
             local CheckboxManager = { _state = false }
-            self:_grow(20)
 
             local checkbox = create('TextButton', {
                 Name = 'Checkbox',
@@ -1830,7 +1866,6 @@ function Library:create_tab(title, icon)
         end
 
         function ModuleManager:create_divider(element_settings)
-            self:_grow(27)
 
             local outer = create('Frame', {
                 Name = 'DividerHolder',
@@ -1884,7 +1919,6 @@ function Library:create_tab(title, icon)
         function ModuleManager:create_slider(element_settings)
             element_settings = element_settings or {}
             local SliderManager = { _value = element_settings.value or element_settings.minimum_value or 0 }
-            self:_grow(27)
 
             local slider = create('TextButton', {
                 Name = 'Slider',
@@ -2039,7 +2073,6 @@ function Library:create_tab(title, icon)
                 _size = 0,
                 _selected = {},
             }
-            self:_grow(44)
 
             local dropdown = create('TextButton', {
                 Name = 'Dropdown',
@@ -2199,20 +2232,19 @@ function Library:create_tab(title, icon)
                 commit()
             end
 
+            -- The module tracks the dropdown's own size through the layout, so
+            -- it only has to animate itself here.
             function DropdownManager:unfold_settings()
                 self._state = not self._state
                 if self._state then
-                    ModuleManager._multiplier += self._size
                     tween(arrow, { Rotation = 180 }, 0.5)
                     tween(dropdown, { Size = UDim2.fromOffset(207, 39 + self._size) }, 0.5)
                     tween(box, { Size = UDim2.fromOffset(207, 22 + self._size) }, 0.5)
                 else
-                    ModuleManager._multiplier -= self._size
                     tween(arrow, { Rotation = 0 }, 0.5)
                     tween(dropdown, { Size = UDim2.fromOffset(207, 39) }, 0.5)
                     tween(box, { Size = UDim2.fromOffset(207, 22) }, 0.5)
                 end
-                ModuleManager:_refresh(true)
             end
 
             local function build_options(option_values)
@@ -2306,7 +2338,6 @@ function Library:create_tab(title, icon)
         function ModuleManager:create_button(element_settings)
             element_settings = element_settings or {}
             local ButtonManager = {}
-            self:_grow(23)
 
             local button = create('TextButton', {
                 Name = 'Button',
@@ -2356,7 +2387,6 @@ function Library:create_tab(title, icon)
         function ModuleManager:create_keybind(element_settings)
             element_settings = element_settings or {}
             local KeybindManager = { _key = nil }
-            self:_grow(20)
 
             local row = create('Frame', {
                 Name = 'KeybindRow',
@@ -2488,7 +2518,6 @@ function Library:create_tab(title, icon)
                 _saturation = 0.5,
                 _value = 1,
             }
-            self:_grow(22)
 
             local picker = create('TextButton', {
                 Name = 'Colorpicker',
@@ -2672,13 +2701,10 @@ function Library:create_tab(title, icon)
             function ColorpickerManager:unfold_settings()
                 self._state = not self._state
                 if self._state then
-                    ModuleManager._multiplier += EXPAND_SIZE
                     tween(picker, { Size = UDim2.fromOffset(207, 17 + EXPAND_SIZE) }, 0.5)
                 else
-                    ModuleManager._multiplier -= EXPAND_SIZE
                     tween(picker, { Size = UDim2.fromOffset(207, 17) }, 0.5)
                 end
-                ModuleManager:_refresh(true)
             end
 
             local function begin_sv_drag()
@@ -2750,7 +2776,6 @@ function Library:create_tab(title, icon)
         function ModuleManager:create_feature(element_settings)
             element_settings = element_settings or {}
             local checked = false
-            self:_grow(20)
 
             local feature_container = create('Frame', {
                 Size = UDim2.fromOffset(207, 16),
