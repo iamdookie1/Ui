@@ -71,6 +71,20 @@ Most managers expose setters: `Slider:set_value(n)`, `Checkbox:set_state(bool)`,
 `Dropdown:set_value(...)` / `Dropdown:set_options({...})`, `Colorpicker:set_color(color)`,
 `Keybind:set_key('F')`, `Textbox:set_value('text')`.
 
+## Sizing and scrolling
+
+Module cards measure themselves from their actual contents, so you never have to
+reserve height for an element. A paragraph with three lines of text and one with
+thirty both fit — the card grows to whatever the wrapped text really measures, and
+the tab column scrolls once the cards exceed the window.
+
+Paragraph and text elements stack their title and body in a layout, so a long title
+pushes the body down instead of overlapping it. The same applies to notifications.
+
+If you're migrating from the original library, `customScale` and `CustomYSize` are no
+longer needed — they're accepted and ignored (`CustomYSize` still acts as a minimum
+height). Delete them and the elements will size themselves correctly.
+
 ## Notifications
 
 ```lua
