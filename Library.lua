@@ -77,9 +77,12 @@ local Theme = {
     Text = Color3.fromRGB(255, 255, 255),
     SubText = Color3.fromRGB(180, 180, 180),
     ToggleOff = Color3.fromRGB(66, 80, 115),
-    Success = Color3.fromRGB(87, 197, 134),
-    Error = Color3.fromRGB(235, 87, 87),
-    Warning = Color3.fromRGB(241, 196, 83),
+    -- Status tints are built to the same recipe as the accent (one muted
+    -- channel, two bright) so they read as part of the palette rather than as
+    -- stock alert colors dropped on top of it.
+    Success = Color3.fromRGB(152, 224, 181),
+    Warning = Color3.fromRGB(240, 214, 152),
+    Error = Color3.fromRGB(240, 152, 160),
 }
 
 -- Objects whose static properties should follow the accent color.
@@ -530,7 +533,7 @@ function Library.SendNotification(settings)
         Size = UDim2.new(1, 0, 0, 0),
         AutomaticSize = Enum.AutomaticSize.Y,
         Position = UDim2.new(0, 320, 0, 0),
-        BackgroundColor3 = Theme.Element,
+        BackgroundColor3 = Theme.Module,
         BackgroundTransparency = 0.05,
         BorderSizePixel = 0,
         Parent = holder,
@@ -543,10 +546,11 @@ function Library.SendNotification(settings)
         }),
     })
 
+    -- Same 2px pill the sidebar uses to mark the active tab.
     create('Frame', {
         Name = 'AccentBar',
-        Size = UDim2.new(0, 3, 1, -10),
-        Position = UDim2.new(0, 5, 0, 5),
+        Size = UDim2.new(0, 2, 1, -14),
+        Position = UDim2.new(0, 7, 0, 7),
         BackgroundColor3 = accent,
         BorderSizePixel = 0,
         Parent = inner,
@@ -571,10 +575,12 @@ function Library.SendNotification(settings)
         create('UIPadding', { PaddingBottom = UDim.new(0, 9) }),
     })
 
+    -- Title/body mirror a module card's ModuleName and Description.
     create('TextLabel', {
         Name = 'Title',
         Text = settings.title or 'Notification',
-        TextColor3 = Color3.fromRGB(210, 210, 210),
+        TextColor3 = accent,
+        TextTransparency = 0.2,
         FontFace = font(Enum.FontWeight.SemiBold),
         TextSize = 13,
         Size = UDim2.new(1, 0, 0, 0),
@@ -592,7 +598,7 @@ function Library.SendNotification(settings)
         Text = settings.text or '',
         TextColor3 = Theme.SubText,
         FontFace = font(Enum.FontWeight.Regular),
-        TextSize = 12,
+        TextSize = 11,
         Size = UDim2.new(1, 0, 0, 0),
         BackgroundTransparency = 1,
         TextXAlignment = Enum.TextXAlignment.Left,
@@ -603,22 +609,22 @@ function Library.SendNotification(settings)
         Parent = content,
     })
 
+    -- 1px, the same weight as the panel's dividers, so it reads as trim
+    -- draining away rather than as a progress meter.
     local progress = create('Frame', {
         Name = 'Progress',
         AnchorPoint = Vector2.new(0, 1),
         Position = UDim2.new(0, 0, 1, 0),
-        Size = UDim2.new(1, 0, 0, 2),
+        Size = UDim2.new(1, 0, 0, 1),
         BackgroundColor3 = accent,
-        BackgroundTransparency = 0.3,
+        BackgroundTransparency = 0.55,
         BorderSizePixel = 0,
         Parent = inner,
-    }, {
-        create('UICorner', { CornerRadius = UDim.new(1, 0) }),
     })
 
     task.spawn(function()
         tween(inner, { Position = UDim2.new(0, 0, 0, 0) }, 0.45)
-        tween(progress, { Size = UDim2.new(0, 0, 0, 2) }, duration, Enum.EasingStyle.Linear)
+        tween(progress, { Size = UDim2.new(0, 0, 0, 1) }, duration, Enum.EasingStyle.Linear)
         task.wait(duration)
         local out = tween(inner, { Position = UDim2.new(0, 320, 0, 0) }, 0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
         out.Completed:Wait()
@@ -657,29 +663,81 @@ function Library:create_watermark(settings)
             ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
         }),
         create('UIPadding', {
-            PaddingLeft = UDim.new(0, 8),
-            PaddingRight = UDim.new(0, 8),
+            PaddingLeft = UDim.new(0, 9),
+            PaddingRight = UDim.new(0, 9),
+        }),
+        create('UIListLayout', {
+            FillDirection = Enum.FillDirection.Horizontal,
+            VerticalAlignment = Enum.VerticalAlignment.Center,
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Padding = UDim.new(0, 7),
         }),
     })
-    local label = create('TextLabel', {
-        Name = 'Label',
+
+    -- Same accent pill as the sidebar, so the watermark reads as a piece of the
+    -- window rather than a separate overlay.
+    local pin = create('Frame', {
+        Name = 'Pin',
+        Size = UDim2.fromOffset(2, 11),
+        BackgroundColor3 = Theme.Accent,
+        BorderSizePixel = 0,
+        LayoutOrder = 1,
+        Parent = frame,
+    }, {
+        create('UICorner', { CornerRadius = UDim.new(1, 0) }),
+    })
+    register_accent(pin, { 'BackgroundColor3' })
+
+    local title_label = create('TextLabel', {
+        Name = 'Title',
         Text = settings.text or 'Nury',
-        RichText = true,
-        TextColor3 = Theme.Text,
+        TextColor3 = Theme.Accent,
         TextTransparency = 0.2,
         FontFace = font(Enum.FontWeight.SemiBold),
         TextSize = 11,
-        Size = UDim2.new(0, 0, 1, 0),
+        Size = UDim2.new(0, 0, 0, 13),
         AutomaticSize = Enum.AutomaticSize.X,
         BackgroundTransparency = 1,
         TextXAlignment = Enum.TextXAlignment.Left,
+        LayoutOrder = 2,
         Parent = frame,
     })
+    register_accent(title_label, { 'TextColor3' })
+
+    local show_stats = settings.show_stats ~= false
+
+    -- A real 1px divider between segments, matching the one splitting the
+    -- sidebar from the panel body.
+    local divider = create('Frame', {
+        Name = 'Divider',
+        Size = UDim2.fromOffset(1, 12),
+        BackgroundColor3 = Theme.Stroke,
+        BackgroundTransparency = 0.5,
+        BorderSizePixel = 0,
+        Visible = show_stats,
+        LayoutOrder = 3,
+        Parent = frame,
+    })
+
+    local stats_label = create('TextLabel', {
+        Name = 'Stats',
+        Text = '',
+        TextColor3 = Theme.Text,
+        TextTransparency = 0.35,
+        FontFace = font(Enum.FontWeight.SemiBold),
+        TextSize = 11,
+        Size = UDim2.new(0, 0, 0, 13),
+        AutomaticSize = Enum.AutomaticSize.X,
+        BackgroundTransparency = 1,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Visible = show_stats,
+        LayoutOrder = 4,
+        Parent = frame,
+    })
+
     Library._watermark_gui = gui
 
-    local base_text = settings.text or 'Nury'
-    local show_stats = settings.show_stats ~= false
-    local frame_count, elapsed, fps = 0, 0, 60
+    local frame_count, elapsed = 0, 0
     if show_stats then
         Connections:set('watermark_update', RunService.Heartbeat:Connect(function(delta)
             frame_count += 1
@@ -687,13 +745,13 @@ function Library:create_watermark(settings)
             if elapsed < 0.5 then
                 return
             end
-            fps = math.floor(frame_count / elapsed + 0.5)
+            local fps = math.floor(frame_count / elapsed + 0.5)
             frame_count, elapsed = 0, 0
             local ping = ''
             pcall(function()
-                ping = ' | ' .. math.floor(Stats.Network.ServerStatsItem['Data Ping']:GetValue() + 0.5) .. ' ms'
+                ping = '  ' .. math.floor(Stats.Network.ServerStatsItem['Data Ping']:GetValue() + 0.5) .. 'ms'
             end)
-            label.Text = string.format('%s | %d fps%s', base_text, fps, ping)
+            stats_label.Text = fps .. 'fps' .. ping
         end))
     end
 
@@ -702,8 +760,11 @@ function Library:create_watermark(settings)
         gui.Enabled = state
     end
     function WatermarkManager:set_text(text)
-        base_text = text
-        label.Text = text
+        title_label.Text = text
+    end
+    function WatermarkManager:set_stats_visible(state)
+        divider.Visible = state
+        stats_label.Visible = state
     end
     return WatermarkManager
 end
@@ -1197,8 +1258,8 @@ function Library:create_tab(title, icon)
             AutomaticCanvasSize = Enum.AutomaticSize.Y,
             ScrollingDirection = Enum.ScrollingDirection.Y,
             ScrollBarThickness = 2,
-            ScrollBarImageColor3 = Theme.Accent,
-            ScrollBarImageTransparency = 0.7,
+            ScrollBarImageColor3 = Theme.Stroke,
+            ScrollBarImageTransparency = 0.35,
             Size = UDim2.fromOffset(243, 445),
             Selectable = false,
             AnchorPoint = Vector2.new(0, 0.5),
@@ -1219,7 +1280,6 @@ function Library:create_tab(title, icon)
                 PaddingBottom = UDim.new(0, 12),
             }),
         })
-        register_accent(section, { 'ScrollBarImageColor3' })
         return section
     end
 
@@ -2339,15 +2399,18 @@ function Library:create_tab(title, icon)
             element_settings = element_settings or {}
             local ButtonManager = {}
 
+            -- Filled surface, left-aligned label, no stroke — the same
+            -- treatment the paragraph and feature rows already use.
             local button = create('TextButton', {
                 Name = 'Button',
                 FontFace = font(Enum.FontWeight.SemiBold),
                 TextSize = 11,
-                Size = UDim2.fromOffset(207, 18),
+                Size = UDim2.fromOffset(207, 20),
                 BackgroundColor3 = Theme.Element,
                 BackgroundTransparency = 0.1,
                 TextColor3 = Color3.fromRGB(210, 210, 210),
                 TextTransparency = 0.2,
+                TextXAlignment = Enum.TextXAlignment.Left,
                 Text = element_settings.title or 'Button',
                 AutoButtonColor = false,
                 BorderSizePixel = 0,
@@ -2355,23 +2418,41 @@ function Library:create_tab(title, icon)
                 Parent = options,
             }, {
                 create('UICorner', { CornerRadius = UDim.new(0, 4) }),
-                create('UIStroke', {
-                    Color = Theme.Stroke,
-                    Transparency = 0.5,
-                    ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+                create('UIPadding', {
+                    PaddingLeft = UDim.new(0, 8),
+                    PaddingRight = UDim.new(0, 8),
                 }),
             })
 
+            -- A small accent chevron on the right marks it as actionable
+            -- without inventing a new shape for the panel.
+            local chevron = create('TextLabel', {
+                Name = 'Chevron',
+                FontFace = font(Enum.FontWeight.SemiBold),
+                TextSize = 11,
+                Text = '›',
+                TextColor3 = Theme.Accent,
+                TextTransparency = 0.35,
+                AnchorPoint = Vector2.new(1, 0.5),
+                Position = UDim2.fromScale(1, 0.5),
+                Size = UDim2.fromOffset(8, 13),
+                BackgroundTransparency = 1,
+                Parent = button,
+            })
+            register_accent(chevron, { 'TextColor3' })
+
             button.MouseEnter:Connect(function()
                 tween(button, { BackgroundColor3 = Theme.ElementHover }, 0.3)
+                tween(chevron, { TextTransparency = 0.1 }, 0.3)
             end)
             button.MouseLeave:Connect(function()
                 tween(button, { BackgroundColor3 = Theme.Element }, 0.3)
+                tween(chevron, { TextTransparency = 0.35 }, 0.3)
             end)
             button.MouseButton1Click:Connect(function()
-                tween(button, { BackgroundTransparency = 0.5 }, 0.1)
-                task.delay(0.1, function()
-                    tween(button, { BackgroundTransparency = 0.1 }, 0.2)
+                tween(button, { BackgroundColor3 = Theme.Accent, BackgroundTransparency = 0.85 }, 0.08)
+                task.delay(0.08, function()
+                    tween(button, { BackgroundColor3 = Theme.Element, BackgroundTransparency = 0.1 }, 0.25)
                 end)
                 if element_settings.callback then
                     element_settings.callback()
@@ -2511,7 +2592,7 @@ function Library:create_tab(title, icon)
 
         function ModuleManager:create_colorpicker(element_settings)
             element_settings = element_settings or {}
-            local EXPAND_SIZE = 96
+            local EXPAND_SIZE = 85
             local ColorpickerManager = {
                 _state = false,
                 _hue = 0.6,
@@ -2531,24 +2612,40 @@ function Library:create_tab(title, icon)
                 Parent = options,
             })
 
+            -- Collapsed row matches a slider's: title left, readout right.
             create('TextLabel', {
                 FontFace = font(Enum.FontWeight.SemiBold),
                 TextSize = 11,
                 TextColor3 = Theme.Text,
                 TextTransparency = 0.2,
                 Text = element_settings.title or 'Color',
-                Size = UDim2.fromOffset(160, 13),
+                Size = UDim2.fromOffset(140, 13),
                 Position = UDim2.fromOffset(0, 2),
                 BackgroundTransparency = 1,
                 TextXAlignment = Enum.TextXAlignment.Left,
                 Parent = picker,
             })
 
+            local hex_label = create('TextLabel', {
+                Name = 'Value',
+                FontFace = font(Enum.FontWeight.SemiBold),
+                TextSize = 10,
+                TextColor3 = Theme.Text,
+                TextTransparency = 0.2,
+                Text = '',
+                AnchorPoint = Vector2.new(1, 0.5),
+                Position = UDim2.new(1, -31, 0.5, 0),
+                Size = UDim2.fromOffset(50, 13),
+                BackgroundTransparency = 1,
+                TextXAlignment = Enum.TextXAlignment.Right,
+                Parent = picker,
+            })
+
             local swatch = create('Frame', {
                 Name = 'Swatch',
-                AnchorPoint = Vector2.new(1, 0),
-                Position = UDim2.new(1, 0, 0, 1),
-                Size = UDim2.fromOffset(25, 14),
+                AnchorPoint = Vector2.new(1, 0.5),
+                Position = UDim2.new(1, 0, 0.5, 0),
+                Size = UDim2.fromOffset(25, 12),
                 BorderSizePixel = 0,
                 BackgroundColor3 = Color3.fromHSV(0.6, 0.5, 1),
                 Parent = picker,
@@ -2556,18 +2653,43 @@ function Library:create_tab(title, icon)
                 create('UICorner', { CornerRadius = UDim.new(0, 4) }),
                 create('UIStroke', {
                     Color = Theme.Stroke,
-                    Transparency = 0.3,
+                    Transparency = 0.5,
                     ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
                 }),
             })
 
+            -- Everything below sits on the same accent-tinted surface the
+            -- dropdown and textbox use, instead of floating loose on the card.
+            local tray = create('Frame', {
+                Name = 'Tray',
+                Position = UDim2.fromOffset(0, 22),
+                Size = UDim2.fromOffset(207, 80),
+                BackgroundColor3 = Theme.Accent,
+                BackgroundTransparency = 0.9,
+                BorderSizePixel = 0,
+                Parent = picker,
+            }, {
+                create('UICorner', { CornerRadius = UDim.new(0, 4) }),
+                create('UIPadding', {
+                    PaddingTop = UDim.new(0, 6),
+                    PaddingBottom = UDim.new(0, 6),
+                    PaddingLeft = UDim.new(0, 6),
+                    PaddingRight = UDim.new(0, 6),
+                }),
+                create('UIListLayout', {
+                    Padding = UDim.new(0, 6),
+                    SortOrder = Enum.SortOrder.LayoutOrder,
+                }),
+            })
+            register_accent(tray, { 'BackgroundColor3' })
+
             local sv_box = create('Frame', {
                 Name = 'SVBox',
-                Position = UDim2.fromOffset(0, 22),
-                Size = UDim2.fromOffset(207, 62),
+                Size = UDim2.fromOffset(195, 56),
                 BorderSizePixel = 0,
                 BackgroundColor3 = Color3.fromHSV(0.6, 1, 1),
-                Parent = picker,
+                LayoutOrder = 1,
+                Parent = tray,
             }, {
                 create('UICorner', { CornerRadius = UDim.new(0, 4) }),
             })
@@ -2616,19 +2738,15 @@ function Library:create_tab(title, icon)
                 Parent = sv_box,
             }, {
                 create('UICorner', { CornerRadius = UDim.new(1, 0) }),
-                create('UIStroke', {
-                    Color = Color3.new(0, 0, 0),
-                    Transparency = 0.5,
-                }),
             })
 
             local hue_bar = create('Frame', {
                 Name = 'HueBar',
-                Position = UDim2.fromOffset(0, 92),
-                Size = UDim2.fromOffset(207, 8),
+                Size = UDim2.fromOffset(195, 6),
                 BorderSizePixel = 0,
                 BackgroundColor3 = Color3.new(1, 1, 1),
-                Parent = picker,
+                LayoutOrder = 2,
+                Parent = tray,
             }, {
                 create('UICorner', { CornerRadius = UDim.new(1, 0) }),
                 create('UIGradient', {
@@ -2644,21 +2762,18 @@ function Library:create_tab(title, icon)
                 }),
             })
 
+            -- Same white pill the slider rides along its track.
             local hue_cursor = create('Frame', {
                 Name = 'Cursor',
                 AnchorPoint = Vector2.new(0.5, 0.5),
                 Position = UDim2.fromScale(0.6, 0.5),
-                Size = UDim2.fromOffset(3, 12),
+                Size = UDim2.fromOffset(8, 8),
                 BorderSizePixel = 0,
                 BackgroundColor3 = Color3.new(1, 1, 1),
                 ZIndex = 3,
                 Parent = hue_bar,
             }, {
                 create('UICorner', { CornerRadius = UDim.new(1, 0) }),
-                create('UIStroke', {
-                    Color = Color3.new(0, 0, 0),
-                    Transparency = 0.5,
-                }),
             })
 
             local function current_color()
@@ -2668,6 +2783,12 @@ function Library:create_tab(title, icon)
             local function refresh_visuals()
                 local color = current_color()
                 swatch.BackgroundColor3 = color
+                hex_label.Text = string.format(
+                    '%02X%02X%02X',
+                    math.floor(color.R * 255 + 0.5),
+                    math.floor(color.G * 255 + 0.5),
+                    math.floor(color.B * 255 + 0.5)
+                )
                 sv_box.BackgroundColor3 = Color3.fromHSV(ColorpickerManager._hue, 1, 1)
                 sv_cursor.Position = UDim2.fromScale(ColorpickerManager._saturation, 1 - ColorpickerManager._value)
                 hue_cursor.Position = UDim2.fromScale(ColorpickerManager._hue, 0.5)

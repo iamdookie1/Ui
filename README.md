@@ -101,10 +101,14 @@ Notifications slide in from the right with a colored accent bar and a progress b
 ## Watermark
 
 ```lua
-local Watermark = Library:create_watermark({ text = 'Nury' }) -- shows "Nury | 60 fps | 45 ms"
+local Watermark = Library:create_watermark({ text = 'Nury' })
 Watermark:set_visible(false)
 Watermark:set_text('New title')
+Watermark:set_stats_visible(false) -- title only, no fps/ping
 ```
+
+Styled like the window's own header: accent pill, accent title, a 1px divider, then
+dimmed stats. Pass `show_stats = false` to omit the divider and stats entirely.
 
 ## Configs
 
