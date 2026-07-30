@@ -393,9 +393,12 @@ local Interface = SettingsTab:create_module({
     callback = function() end,
 })
 
+-- Theme controls pass ignoresaved so the look never persists between
+-- sessions - the panel always starts on its default accent.
 Interface:create_colorpicker({
     title = 'Accent color',
     flag = 'ui_accent',
+    ignoresaved = true,
     default = Color3.fromRGB(152, 181, 255),
     callback = function(color)
         Window:set_accent(color) -- recolors the whole UI live
@@ -405,6 +408,7 @@ Interface:create_colorpicker({
 Interface:create_slider({
     title = 'Background opacity',
     flag = 'ui_opacity',
+    ignoresaved = true,
     minimum_value = 0,
     maximum_value = 1,
     value = 0.05,
@@ -414,6 +418,7 @@ Interface:create_slider({
 Interface:create_checkbox({
     title = 'Show watermark',
     flag = 'ui_watermark',
+    ignoresaved = true,
     default = true,
     callback = function(state) Watermark:set_visible(state) end,
 })
@@ -421,6 +426,7 @@ Interface:create_checkbox({
 Interface:create_checkbox({
     title = 'Show fps / ping',
     flag = 'ui_watermark_stats',
+    ignoresaved = true,
     default = true,
     callback = function(state) Watermark:set_stats_visible(state) end,
 })
@@ -428,6 +434,7 @@ Interface:create_checkbox({
 Interface:create_dropdown({
     title = 'Menu key',
     flag = 'ui_toggle_key',
+    ignoresaved = true,
     options = { 'Insert', 'RightShift', 'RightControl', 'F4' },
     callback = function(option)
         Window:set_toggle_key(Enum.KeyCode[option])

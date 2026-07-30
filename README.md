@@ -71,6 +71,11 @@ local Module = Tab:create_module({
 — they store their checked state and keybind under it. Pass `disablecheck = true` to
 drop the checkbox and use the row as a bindable button via `button_callback`.
 
+Sliders, checkboxes, dropdowns and color pickers all accept `ignoresaved = true`,
+which keeps that element out of the config file — it starts on its `default`/`value`
+every session. Use it for anything cosmetic (accent, opacity, watermark toggles) so
+the panel's look never persists.
+
 Most managers expose setters: `Slider:set_value(n)`, `Checkbox:set_state(bool)`,
 `Dropdown:set_value(...)` / `Dropdown:set_options({...})`, `Colorpicker:set_color(color)`,
 `Keybind:set_key('F')`, `Textbox:set_value('text')`.
@@ -126,6 +131,17 @@ Library:load_config('legit')  -- applies on next UI load
 Library:list_configs()        -- { 'legit', ... }
 Library.Flags                 -- live flag table
 ```
+
+## Mobile
+
+- Sliders and the color picker track the input's own position, so dragging works
+  under touch. (Reading `Mouse.X` would peg them to their minimum on every tap.)
+- The tab column and both content columns sink input, so a touch-drag scrolls the
+  column instead of dragging the window. Drag the window from its header or the
+  sidebar background.
+- The window scales down to fit the viewport on every device — never up — so it
+  can't overflow a small screen.
+- Rebinding a module key is middle-click, which has no touch equivalent yet.
 
 ## Notes
 

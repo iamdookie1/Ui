@@ -85,6 +85,9 @@ local Theme = {
     Error = Color3.fromRGB(240, 152, 160),
 }
 
+local WINDOW_WIDTH, WINDOW_HEIGHT = 698, 479
+local WINDOW_MARGIN = 32 -- breathing room kept between the window and the screen edge
+
 -- Objects whose static properties should follow the accent color.
 -- AccentRegistry[object] = { 'BackgroundColor3', 'TextColor3', ... }
 local AccentRegistry = setmetatable({}, { __mode = 'k' })
@@ -848,9 +851,20 @@ function Library.new(options)
     return self
 end
 
+-- Scale the window down until it fits the viewport, never up. The old
+-- viewport.X / 1400 only considered width and only ran on detected mobile, so
+-- a short or narrow screen got a window larger than the display.
 function Library:get_screen_scale()
-    local viewport_size_x = workspace.CurrentCamera.ViewportSize.X
-    self._ui_scale = viewport_size_x / 1400
+    local viewport = workspace.CurrentCamera.ViewportSize
+    if viewport.X <= 0 or viewport.Y <= 0 then
+        self._ui_scale = 1
+        return
+    end
+    local scale = math.min(
+        viewport.X / (WINDOW_WIDTH + WINDOW_MARGIN),
+        viewport.Y / (WINDOW_HEIGHT + WINDOW_MARGIN)
+    )
+    self._ui_scale = math.clamp(scale, 0.4, 1)
 end
 
 function Library:get_device()
@@ -942,7 +956,7 @@ function Library:create_ui()
     local handler = create('Frame', {
         Name = 'Handler',
         BackgroundTransparency = 1,
-        Size = UDim2.fromOffset(698, 479),
+        Size = UDim2.fromOffset(WINDOW_WIDTH, WINDOW_HEIGHT),
         BorderSizePixel = 0,
         Parent = container,
     })
@@ -953,6 +967,8 @@ function Library:create_ui()
         ScrollBarThickness = 0,
         Size = UDim2.fromOffset(129, 401),
         Selectable = false,
+        Active = true,
+        ScrollingDirection = Enum.ScrollingDirection.Y,
         AutomaticCanvasSize = Enum.AutomaticSize.Y,
         BackgroundTransparency = 1,
         Position = UDim2.fromScale(0.026, 0.111),
@@ -1108,7 +1124,7 @@ function Library:create_ui()
 
     function self:change_visiblity(state)
         if state then
-            tween(container, { Size = UDim2.fromOffset(698, 479) }, 0.5)
+            tween(container, { Size = UDim2.fromOffset(WINDOW_WIDTH, WINDOW_HEIGHT) }, 0.5)
         else
             tween(container, { Size = UDim2.fromOffset(104, 52) }, 0.5)
         end
@@ -1125,15 +1141,15 @@ function Library:create_ui()
             ContentProvider:PreloadAsync(content)
         end)
         self:get_device()
-        if self._device == 'Mobile' or self._device == 'Unknown' then
+        -- Applied on every device, not just detected mobile: a small window or
+        -- a split screen can be too short for the panel on desktop too.
+        self:get_screen_scale()
+        ui_scale.Scale = self._ui_scale
+        Connections:set('ui_scale', workspace.CurrentCamera:GetPropertyChangedSignal('ViewportSize'):Connect(function()
             self:get_screen_scale()
             ui_scale.Scale = self._ui_scale
-            Connections:set('ui_scale', workspace.CurrentCamera:GetPropertyChangedSignal('ViewportSize'):Connect(function()
-                self:get_screen_scale()
-                ui_scale.Scale = self._ui_scale
-            end))
-        end
-        tween(container, { Size = UDim2.fromOffset(698, 479) }, 0.5)
+        end))
+        tween(container, { Size = UDim2.fromOffset(WINDOW_WIDTH, WINDOW_HEIGHT) }, 0.5)
         Library._blur = AcrylicBlur.new(container)
         Library._ui_loaded = true
     end
@@ -1262,6 +1278,9 @@ function Library:create_tab(title, icon)
             ScrollBarImageTransparency = 0.35,
             Size = UDim2.fromOffset(243, 445),
             Selectable = false,
+            -- Sinks input so a touch-drag scrolls the column instead of
+            -- reaching the container and dragging the whole window.
+            Active = true,
             AnchorPoint = Vector2.new(0, 0.5),
             BackgroundTransparency = 1,
             Position = UDim2.fromScale(x_scale, 0.5),
@@ -1904,7 +1923,7 @@ function Library:create_tab(title, icon)
                     tween(box, { BackgroundTransparency = 0.9 }, 0.5)
                     tween(fill, { Size = UDim2.fromOffset(0, 0) }, 0.5)
                 end
-                if element_settings.flag then
+                if element_settings.flag and not element_settings.ignoresaved then
                     Library:set_flag(element_settings.flag, self._state)
                 end
                 if element_settings.callback then
@@ -1913,7 +1932,7 @@ function Library:create_tab(title, icon)
             end
             CheckboxManager.set_state = CheckboxManager.change_state
 
-            if Library:flag_type(element_settings.flag, 'boolean') then
+            if Library:flag_type(element_settings.flag, 'boolean') and not element_settings.ignoresaved then
                 CheckboxManager:change_state(Library._config._flags[element_settings.flag])
             elseif element_settings.default then
                 CheckboxManager:change_state(true)
@@ -2092,22 +2111,32 @@ function Library:create_tab(title, icon)
             end
             SliderManager.set_value = SliderManager.set_percentage
 
-            function SliderManager:update()
-                local alpha = math.clamp((Mouse.X - drag.AbsolutePosition.X) / drag.AbsoluteSize.X, 0, 1)
+            -- Driven by the input's own position rather than Mouse.X, so touch
+            -- works. Mouse.X never updates on a touch device, which would peg
+            -- the slider to its minimum on every tap.
+            function SliderManager:update(x)
+                local alpha = math.clamp((x - drag.AbsolutePosition.X) / drag.AbsoluteSize.X, 0, 1)
                 self:set_percentage(minimum + (maximum - minimum) * alpha)
             end
 
-            function SliderManager:input()
-                self:update()
-                Connections:set('slider_drag_' .. tostring(element_settings.flag or element_settings.title), Mouse.Move:Connect(function()
-                    self:update()
+            local drag_key = 'slider_drag_' .. tostring(element_settings.flag or element_settings.title)
+            local end_key = 'slider_input_' .. tostring(element_settings.flag or element_settings.title)
+
+            function SliderManager:input(x)
+                self:update(x)
+                Connections:set(drag_key, UserInputService.InputChanged:Connect(function(input)
+                    if input.UserInputType ~= Enum.UserInputType.MouseMovement
+                        and input.UserInputType ~= Enum.UserInputType.Touch then
+                        return
+                    end
+                    self:update(input.Position.X)
                 end))
-                Connections:set('slider_input_' .. tostring(element_settings.flag or element_settings.title), UserInputService.InputEnded:Connect(function(input)
+                Connections:set(end_key, UserInputService.InputEnded:Connect(function(input)
                     if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
                         return
                     end
-                    Connections:disconnect('slider_drag_' .. tostring(element_settings.flag or element_settings.title))
-                    Connections:disconnect('slider_input_' .. tostring(element_settings.flag or element_settings.title))
+                    Connections:disconnect(drag_key)
+                    Connections:disconnect(end_key)
                     if not element_settings.ignoresaved then
                         Config:save(Library._config_name, Library._config)
                     end
@@ -2120,8 +2149,12 @@ function Library:create_tab(title, icon)
                 SliderManager:set_percentage(element_settings.value or minimum)
             end
 
-            slider.MouseButton1Down:Connect(function()
-                SliderManager:input()
+            slider.InputBegan:Connect(function(input)
+                if input.UserInputType ~= Enum.UserInputType.MouseButton1
+                    and input.UserInputType ~= Enum.UserInputType.Touch then
+                    return
+                end
+                SliderManager:input(input.Position.X)
             end)
             return SliderManager
         end
@@ -2257,7 +2290,7 @@ function Library:create_tab(title, icon)
             local function commit()
                 current_option.Text = table.concat(DropdownManager._selected, ', ')
                 refresh_highlight()
-                if element_settings.flag then
+                if element_settings.flag and not element_settings.ignoresaved then
                     if element_settings.multi_dropdown then
                         Library:set_flag(element_settings.flag, table.clone(DropdownManager._selected))
                     else
@@ -2378,7 +2411,9 @@ function Library:create_tab(title, icon)
             build_options(element_settings.options or {})
 
             -- Restore saved selection
-            local saved = element_settings.flag and Library._config._flags[element_settings.flag]
+            local saved = not element_settings.ignoresaved
+                and element_settings.flag
+                and Library._config._flags[element_settings.flag]
             if typeof(saved) == 'table' and element_settings.multi_dropdown then
                 DropdownManager._selected = table.clone(saved)
                 commit()
@@ -2797,7 +2832,7 @@ function Library:create_tab(title, icon)
             local function apply(save)
                 refresh_visuals()
                 local color = current_color()
-                if element_settings.flag then
+                if element_settings.flag and not element_settings.ignoresaved then
                     Library:set_flag(element_settings.flag, {
                         R = math.floor(color.R * 255 + 0.5),
                         G = math.floor(color.G * 255 + 0.5),
@@ -2828,53 +2863,51 @@ function Library:create_tab(title, icon)
                 end
             end
 
-            local function begin_sv_drag()
-                local function update_sv()
-                    local absolute_position = sv_box.AbsolutePosition
-                    local absolute_size = sv_box.AbsoluteSize
-                    ColorpickerManager._saturation = math.clamp((Mouse.X - absolute_position.X) / absolute_size.X, 0, 1)
-                    ColorpickerManager._value = 1 - math.clamp((Mouse.Y - absolute_position.Y) / absolute_size.Y, 0, 1)
+            -- Both drags read the input's position so they work under touch.
+            local function begin_drag(name, on_position, start_position)
+                local function follow(position)
+                    on_position(position)
                     apply(false)
                 end
-                update_sv()
-                Connections:set('colorpicker_sv_drag', Mouse.Move:Connect(update_sv))
-                Connections:set('colorpicker_sv_end', UserInputService.InputEnded:Connect(function(input)
+                follow(start_position)
+                Connections:set('colorpicker_' .. name .. '_drag', UserInputService.InputChanged:Connect(function(input)
+                    if input.UserInputType ~= Enum.UserInputType.MouseMovement
+                        and input.UserInputType ~= Enum.UserInputType.Touch then
+                        return
+                    end
+                    follow(input.Position)
+                end))
+                Connections:set('colorpicker_' .. name .. '_end', UserInputService.InputEnded:Connect(function(input)
                     if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
                         return
                     end
-                    Connections:disconnect('colorpicker_sv_drag')
-                    Connections:disconnect('colorpicker_sv_end')
+                    Connections:disconnect('colorpicker_' .. name .. '_drag')
+                    Connections:disconnect('colorpicker_' .. name .. '_end')
                     apply(true)
                 end))
             end
 
-            local function begin_hue_drag()
-                local function update_hue()
-                    local absolute_position = hue_bar.AbsolutePosition
-                    local absolute_size = hue_bar.AbsoluteSize
-                    ColorpickerManager._hue = math.clamp((Mouse.X - absolute_position.X) / absolute_size.X, 0, 1)
-                    apply(false)
-                end
-                update_hue()
-                Connections:set('colorpicker_hue_drag', Mouse.Move:Connect(update_hue))
-                Connections:set('colorpicker_hue_end', UserInputService.InputEnded:Connect(function(input)
-                    if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
-                        return
-                    end
-                    Connections:disconnect('colorpicker_hue_drag')
-                    Connections:disconnect('colorpicker_hue_end')
-                    apply(true)
-                end))
+            local function set_from_sv(position)
+                local absolute_position = sv_box.AbsolutePosition
+                local absolute_size = sv_box.AbsoluteSize
+                ColorpickerManager._saturation = math.clamp((position.X - absolute_position.X) / absolute_size.X, 0, 1)
+                ColorpickerManager._value = 1 - math.clamp((position.Y - absolute_position.Y) / absolute_size.Y, 0, 1)
+            end
+
+            local function set_from_hue(position)
+                local absolute_position = hue_bar.AbsolutePosition
+                local absolute_size = hue_bar.AbsoluteSize
+                ColorpickerManager._hue = math.clamp((position.X - absolute_position.X) / absolute_size.X, 0, 1)
             end
 
             sv_box.InputBegan:Connect(function(input)
                 if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                    begin_sv_drag()
+                    begin_drag('sv', set_from_sv, input.Position)
                 end
             end)
             hue_bar.InputBegan:Connect(function(input)
                 if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                    begin_hue_drag()
+                    begin_drag('hue', set_from_hue, input.Position)
                 end
             end)
             picker.MouseButton1Click:Connect(function()
@@ -2882,7 +2915,9 @@ function Library:create_tab(title, icon)
             end)
 
             -- Restore saved color, or apply default
-            local saved = element_settings.flag and Library._config._flags[element_settings.flag]
+            local saved = not element_settings.ignoresaved
+                and element_settings.flag
+                and Library._config._flags[element_settings.flag]
             if typeof(saved) == 'table' and saved.R then
                 ColorpickerManager:set_color(Color3.fromRGB(saved.R, saved.G, saved.B), true)
             elseif element_settings.default then
