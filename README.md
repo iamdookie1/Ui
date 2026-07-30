@@ -7,7 +7,7 @@ rebuilt with cleaner code and more components.
 ## Loading
 
 ```lua
-local Library = loadstring(game:HttpGet('https://raw.githubusercontent.com/iamdookie1/ui/main/Library.lua'))()
+local Library = loadstring(game:HttpGet('https://raw.githubusercontent.com/iamdookie1/Ui/main/Library.lua'))()
 
 local Window = Library.new({
     title = 'Nury',
@@ -65,7 +65,11 @@ local Module = Tab:create_module({
 | Paragraph | `Module:create_paragraph({ title, text })` — returns `:Set{}` |
 | Text | `Module:create_text({ text })` — returns `:Set{}` |
 | Divider | `Module:create_divider({ showtopic, title, disableline })` |
-| Feature row | `Module:create_feature({ title, flag, callback, button_callback, disablecheck })` |
+| Feature row | `Module:create_feature({ title, flag, default, callback, button_callback, disablecheck })` |
+
+`create_checkbox` is also available as `create_toggle`. Feature rows require a `flag`
+— they store their checked state and keybind under it. Pass `disablecheck = true` to
+drop the checkbox and use the row as a bindable button via `button_callback`.
 
 Most managers expose setters: `Slider:set_value(n)`, `Checkbox:set_state(bool)`,
 `Dropdown:set_value(...)` / `Dropdown:set_options({...})`, `Colorpicker:set_color(color)`,
@@ -96,7 +100,9 @@ Library.SendNotification({
 })
 ```
 
-Notifications slide in from the right with a colored accent bar and a progress bar.
+Notifications slide in from the right and are built like module cards — module
+background, accent title, the same 2px accent pill the sidebar uses — with a 1px
+timer draining along the bottom. The `type` only changes the tint.
 
 ## Watermark
 
