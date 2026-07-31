@@ -14,6 +14,7 @@ local Window = Library.new({
     folder = 'Nury',                  -- config save folder
     toggle_key = Enum.KeyCode.Insert, -- show/hide key
     accent = Color3.fromRGB(152, 181, 255), -- optional accent override
+    scale = 1,                        -- multiplies the auto-fit scale
 })
 
 -- ... build tabs/modules ...
@@ -33,6 +34,7 @@ See [`Example.lua`](Example.lua) for a full working script.
 | `Window:UIVisiblity()` | Toggle the whole ScreenGui |
 | `Window:set_accent(color)` | Recolor the accent everywhere at runtime |
 | `Window:set_toggle_key(keycode)` | Change the show/hide key |
+| `Window:set_scale(n)` | Multiply the automatic scale (0.25–2) |
 | `Window:unload()` | Destroy everything (UI, blur, connections) |
 | `Window:Update1Run(value)` | Compat: set background transparency |
 
@@ -139,8 +141,14 @@ Library.Flags                 -- live flag table
 - The tab column and both content columns sink input, so a touch-drag scrolls the
   column instead of dragging the window. Drag the window from its header or the
   sidebar background.
-- The window scales down to fit the viewport on every device — never up — so it
-  can't overflow a small screen.
+- The window scales itself to the viewport on every device, never upward. Touch
+  devices target a smaller share of the screen than desktop, because a phone
+  viewport is wide enough in GUI pixels to "fit" the panel at a size that's
+  unusable on a physically small screen. Override with `scale` or `set_scale`.
+- Notifications and the watermark scale with the window rather than staying
+  desktop-sized.
+- A drag is owned by one control at a time, so a finger sliding down the panel
+  can't pick up every slider it crosses.
 - Rebinding a module key is middle-click, which has no touch equivalent yet.
 
 ## Notes

@@ -96,6 +96,14 @@ local function register_accent(object, properties)
     AccentRegistry[object] = properties
 end
 
+-- UIScale instances driven together by Library:apply_scale().
+local ScaleTargets = setmetatable({}, { __mode = 'k' })
+
+local function register_scale(ui_scale)
+    ScaleTargets[ui_scale] = true
+    return ui_scale
+end
+
 --// Small helpers ----------------------------------------------------------
 
 local function font(weight)
@@ -441,6 +449,8 @@ local Library = {
     _device = nil,
     _ui_open = true,
     _ui_scale = 1,
+    _scale_multiplier = 1,
+    _active_drag = nil,
     _ui_loaded = false,
     _ui = nil,
     _blur = nil,
@@ -511,6 +521,8 @@ local function get_notification_container()
             SortOrder = Enum.SortOrder.LayoutOrder,
             Padding = UDim.new(0, 8),
         }),
+        -- Anchored to the top-right so the stack scales toward that corner.
+        register_scale(create('UIScale', { Scale = Library._ui_scale })),
     })
     Library._notification_gui = gui
     return container
@@ -675,6 +687,7 @@ function Library:create_watermark(settings)
             SortOrder = Enum.SortOrder.LayoutOrder,
             Padding = UDim.new(0, 7),
         }),
+        register_scale(create('UIScale', { Scale = Library._ui_scale })),
     })
 
     -- Same accent pill as the sidebar, so the watermark reads as a piece of the
@@ -836,6 +849,7 @@ function Library.new(options)
     if options.accent then
         Theme.Accent = options.accent
     end
+    Library._scale_multiplier = math.clamp(options.scale or 1, 0.25, 2)
     Library._config_name = tostring(options.config_name or game.GameId)
     Library._config = Config:load(Library._config_name)
     Library.Flags = Library._config._flags
@@ -857,14 +871,36 @@ end
 function Library:get_screen_scale()
     local viewport = workspace.CurrentCamera.ViewportSize
     if viewport.X <= 0 or viewport.Y <= 0 then
-        self._ui_scale = 1
+        Library._ui_scale = 1
         return
     end
+    -- Fitting the screen isn't the same as being comfortable on it. A phone
+    -- viewport is wide enough in GUI pixels to "fit" the panel at full size,
+    -- which on a physically small screen is overwhelming, so touch devices
+    -- target a smaller share of the viewport than desktop does.
+    local touch_device = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+    local fill = touch_device and 0.55 or 0.92
     local scale = math.min(
-        viewport.X / (WINDOW_WIDTH + WINDOW_MARGIN),
-        viewport.Y / (WINDOW_HEIGHT + WINDOW_MARGIN)
+        (viewport.X * fill) / WINDOW_WIDTH,
+        (viewport.Y * fill) / WINDOW_HEIGHT,
+        1 -- never upscale past the design size
     )
-    self._ui_scale = math.clamp(scale, 0.4, 1)
+    Library._ui_scale = math.clamp(scale * Library._scale_multiplier, 0.25, 2)
+end
+
+-- Every ScreenGui the library owns scales together, so notifications and the
+-- watermark shrink alongside the window instead of staying desktop-sized.
+function Library:apply_scale()
+    for object in ScaleTargets do
+        object.Scale = Library._ui_scale
+    end
+end
+
+function Library:set_scale(multiplier)
+    Library._scale_multiplier = math.clamp(multiplier or 1, 0.25, 2)
+    self:get_screen_scale()
+    self:apply_scale()
+    return Library._ui_scale
 end
 
 function Library:get_device()
@@ -881,6 +917,23 @@ end
 
 function Library:removed(action)
     self._ui.AncestryChanged:Once(action)
+end
+
+-- Only one control may own a drag at a time. Without this, a finger sliding
+-- down the panel picks up every slider it crosses, because each one sees the
+-- touch begin over it and starts tracking.
+function Library:claim_drag(owner)
+    if Library._active_drag ~= nil and Library._active_drag ~= owner then
+        return false
+    end
+    Library._active_drag = owner
+    return true
+end
+
+function Library:release_drag(owner)
+    if Library._active_drag == owner then
+        Library._active_drag = nil
+    end
 end
 
 function Library:set_accent(color)
@@ -1058,7 +1111,7 @@ function Library:create_ui()
         Parent = handler,
     })
 
-    local ui_scale = create('UIScale', { Parent = container })
+    register_scale(create('UIScale', { Parent = container }))
 
     self._ui = screen_gui
     self._container = container
@@ -1144,10 +1197,10 @@ function Library:create_ui()
         -- Applied on every device, not just detected mobile: a small window or
         -- a split screen can be too short for the panel on desktop too.
         self:get_screen_scale()
-        ui_scale.Scale = self._ui_scale
+        self:apply_scale()
         Connections:set('ui_scale', workspace.CurrentCamera:GetPropertyChangedSignal('ViewportSize'):Connect(function()
             self:get_screen_scale()
-            ui_scale.Scale = self._ui_scale
+            self:apply_scale()
         end))
         tween(container, { Size = UDim2.fromOffset(WINDOW_WIDTH, WINDOW_HEIGHT) }, 0.5)
         Library._blur = AcrylicBlur.new(container)
@@ -2122,21 +2175,31 @@ function Library:create_tab(title, icon)
             local drag_key = 'slider_drag_' .. tostring(element_settings.flag or element_settings.title)
             local end_key = 'slider_input_' .. tostring(element_settings.flag or element_settings.title)
 
-            function SliderManager:input(x)
-                self:update(x)
+            function SliderManager:input(began)
+                local is_touch = began.UserInputType == Enum.UserInputType.Touch
+                self:update(began.Position.X)
                 Connections:set(drag_key, UserInputService.InputChanged:Connect(function(input)
-                    if input.UserInputType ~= Enum.UserInputType.MouseMovement
-                        and input.UserInputType ~= Enum.UserInputType.Touch then
+                    if is_touch then
+                        -- Follow only the finger that started this drag.
+                        if input ~= began then
+                            return
+                        end
+                    elseif input.UserInputType ~= Enum.UserInputType.MouseMovement then
                         return
                     end
                     self:update(input.Position.X)
                 end))
                 Connections:set(end_key, UserInputService.InputEnded:Connect(function(input)
-                    if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
+                    if is_touch then
+                        if input ~= began then
+                            return
+                        end
+                    elseif input.UserInputType ~= Enum.UserInputType.MouseButton1 then
                         return
                     end
                     Connections:disconnect(drag_key)
                     Connections:disconnect(end_key)
+                    Library:release_drag(SliderManager)
                     if not element_settings.ignoresaved then
                         Config:save(Library._config_name, Library._config)
                     end
@@ -2154,7 +2217,10 @@ function Library:create_tab(title, icon)
                     and input.UserInputType ~= Enum.UserInputType.Touch then
                     return
                 end
-                SliderManager:input(input.Position.X)
+                if not Library:claim_drag(SliderManager) then
+                    return
+                end
+                SliderManager:input(input)
             end)
             return SliderManager
         end
@@ -2864,25 +2930,37 @@ function Library:create_tab(title, icon)
             end
 
             -- Both drags read the input's position so they work under touch.
-            local function begin_drag(name, on_position, start_position)
+            local function begin_drag(name, on_position, began)
+                if not Library:claim_drag(ColorpickerManager) then
+                    return
+                end
+                local is_touch = began.UserInputType == Enum.UserInputType.Touch
                 local function follow(position)
                     on_position(position)
                     apply(false)
                 end
-                follow(start_position)
+                follow(began.Position)
                 Connections:set('colorpicker_' .. name .. '_drag', UserInputService.InputChanged:Connect(function(input)
-                    if input.UserInputType ~= Enum.UserInputType.MouseMovement
-                        and input.UserInputType ~= Enum.UserInputType.Touch then
+                    if is_touch then
+                        if input ~= began then
+                            return
+                        end
+                    elseif input.UserInputType ~= Enum.UserInputType.MouseMovement then
                         return
                     end
                     follow(input.Position)
                 end))
                 Connections:set('colorpicker_' .. name .. '_end', UserInputService.InputEnded:Connect(function(input)
-                    if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
+                    if is_touch then
+                        if input ~= began then
+                            return
+                        end
+                    elseif input.UserInputType ~= Enum.UserInputType.MouseButton1 then
                         return
                     end
                     Connections:disconnect('colorpicker_' .. name .. '_drag')
                     Connections:disconnect('colorpicker_' .. name .. '_end')
+                    Library:release_drag(ColorpickerManager)
                     apply(true)
                 end))
             end
@@ -2902,12 +2980,12 @@ function Library:create_tab(title, icon)
 
             sv_box.InputBegan:Connect(function(input)
                 if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                    begin_drag('sv', set_from_sv, input.Position)
+                    begin_drag('sv', set_from_sv, input)
                 end
             end)
             hue_bar.InputBegan:Connect(function(input)
                 if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                    begin_drag('hue', set_from_hue, input.Position)
+                    begin_drag('hue', set_from_hue, input)
                 end
             end)
             picker.MouseButton1Click:Connect(function()

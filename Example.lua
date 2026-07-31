@@ -415,6 +415,17 @@ Interface:create_slider({
     callback = function(value) Window:Update1Run(value) end,
 })
 
+-- The panel already sizes itself down on phones; this is the manual override.
+Interface:create_slider({
+    title = 'UI scale',
+    flag = 'ui_scale',
+    ignoresaved = true,
+    minimum_value = 0.5,
+    maximum_value = 1.5,
+    value = 1,
+    callback = function(value) Window:set_scale(value) end,
+})
+
 Interface:create_checkbox({
     title = 'Show watermark',
     flag = 'ui_watermark',
