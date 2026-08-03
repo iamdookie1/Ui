@@ -15,9 +15,10 @@ local Window = Centrl:Window({
     Scale      = 1,                              -- multiplies the auto-fit scale
     SettingsTab = true,                          -- built-in settings tab
     MobileButton = true,                         -- floating open/close button on touch
+    IconApi    = 'https://your-deployment.vercel.app',  -- Lucide icon API
 })
 
-local Tab = Window:Tab({ Title = 'legit', Icon = 'rbxassetid://6034509993' })
+local Tab = Window:Tab({ Title = 'legit', Icon = 'crosshair' })
 local Sec = Tab:Section({ Title = 'aimbot', Side = 'left' })  -- 'left' | 'right'
 
 Sec:Toggle({ Title = 'enabled', Flag = 'aim', Callback = function(state) end })
@@ -65,12 +66,50 @@ Option keys are read case-insensitively across common spellings (`Title`/`title`
 `Callback`/`callback`, `Min`/`minimum_value`, …), and the old lowercase call names
 (`create_toggle`, `create_slider`, …) are aliased to the new ones.
 
+## Icons
+
+Anywhere an `Icon` is accepted you can pass a [Lucide](https://lucide.dev) name
+(`'house'`, `'ArrowRight'`, `'arrow-right'`), a bare asset id (`'6034509993'`) or a
+full `rbxassetid://` string. Asset ids are set directly; Lucide names are fetched
+from the icon API in [`iamdookie1/web3`](https://github.com/iamdookie1/web3),
+decoded from `alpha8` coverage bytes into an `EditableImage`, and cached per
+name + size + stroke + padding.
+
+```lua
+Centrl:SetIconSource('https://your-deployment.vercel.app')  -- or Window{ IconApi = ... }
+Centrl.Icons.Size = 64        -- render resolution
+Centrl.Icons.StrokeWidth = 2
+Centrl.Icons.Padding = 4      -- keeps round caps off the frame edge
+Centrl.Icons.Enabled = false  -- ignore Lucide names entirely
+Centrl:ApplyIcon(myImageLabel, 'sword')   -- never yields
+Centrl:GetIcon('sword')                   -- yields, returns the EditableImage
+```
+
+Fetching happens on the client — an executor has HTTP there, so there's no
+`RemoteFunction` hop like the `roblox/LucideIcons.lua` module in that repo needs.
+Icons are requested white and tinted with `ImageColor3`, so one fetch serves every
+accent. It needs `AssetService:CreateEditableImage`; where that's unavailable, or
+when the API can't be reached, the icon is skipped with one warning and everything
+else still works. Set `Icons.BaseUrl`/`IconApi` to your own deployment — there is no
+public one.
+
 ## Configs
 
 Flags auto-save per game to `<Folder>/<GameId>.json` whenever a value changes, and
 `Window:Load()` reads them back through each element's own setter. Named configs go
 to `<Folder>/configs/<name>.json` and are managed from the settings tab. Color and
 keycode flags are boxed so they survive the JSON round trip.
+
+## Position
+
+The window is anchored top-left rather than centered, so collapsing to the topbar
+and expanding again leave the header exactly where it was — a centered anchor moves
+the top edge by half of every height change, which is what made the panel creep up
+the screen each time it reopened.
+
+It is also clamped inside the viewport: on every frame of a drag, after each
+open/collapse tween, on scale changes and on viewport changes. The floating mobile
+button is clamped the same way. Neither can be pushed off screen.
 
 ## Mobile
 
