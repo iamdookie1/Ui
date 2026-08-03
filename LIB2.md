@@ -93,6 +93,10 @@ when the API can't be reached, the icon is skipped with one warning and everythi
 else still works. Set `Icons.BaseUrl`/`IconApi` to your own deployment — there is no
 public one.
 
+The topbar's own minimise (`chevron-up`/`chevron-down`, flips with state) and close
+(`x`) controls are Lucide icons too, not the placeholder text glyphs from the first
+cut of this library.
+
 ## Configs
 
 Flags auto-save per game to `<Folder>/<GameId>.json` whenever a value changes, and
@@ -105,11 +109,18 @@ keycode flags are boxed so they survive the JSON round trip.
 The window is anchored top-left rather than centered, so collapsing to the topbar
 and expanding again leave the header exactly where it was — a centered anchor moves
 the top edge by half of every height change, which is what made the panel creep up
-the screen each time it reopened.
+the screen each time it reopened. Minimising and closing are also tracked as two
+separate, independent states (`Open` vs `Visible`): hiding the panel and reshowing
+it restores whichever of the two it was actually left in, instead of always
+snapping back open.
 
-It is also clamped inside the viewport: on every frame of a drag, after each
-open/collapse tween, on scale changes and on viewport changes. The floating mobile
-button is clamped the same way. Neither can be pushed off screen.
+Clamping to the viewport isn't event-driven — it's wired to the window's own
+`AbsoluteSize` and `Position`, so it fires on every single change to either one:
+every frame of a drag, every frame of the open/collapse tween (not just once it
+lands), a scale change, a viewport resize. Nothing can put the panel off-screen
+even momentarily, because there's no path that changes its size or position without
+also running the clamp immediately afterward. The floating mobile button is wired
+the same way. Neither can end up off screen, instantly or otherwise.
 
 ## Mobile
 
@@ -129,8 +140,10 @@ button is clamped the same way. Neither can be pushed off screen.
 - Dropdown and colorpicker bodies expand inline rather than floating, so nothing
   gets clipped by the scrolling column and the page still scrolls while they're open.
 - A draggable floating button opens the panel where there's no keyboard; tapping it
-  toggles, dragging it moves it. Keybind elements say so instead of hanging when
-  there's no keyboard to listen for.
+  toggles, dragging it moves it, and it shrinks slightly on press for tactile
+  feedback. Its icon defaults to the Lucide `menu` icon — override with
+  `Window{ MobileButtonIcon = 'name' }`. Keybind elements say so instead of hanging
+  when there's no keyboard to listen for.
 
 ## Notes
 

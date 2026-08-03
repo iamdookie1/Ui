@@ -1126,7 +1126,10 @@ function Library:Window(options)
     local self = setmetatable({}, Window)
     self.Tabs = {}
     self.ToggleKey = toggle_key
-    self.Open = false
+    -- Open tracks expanded-vs-minimised and is independent of Visible (whether
+    -- the whole panel is shown at all), so hiding and reshowing the panel
+    -- restores whichever of those two states it was actually left in.
+    self.Open = true
     self.Visible = true
 
     --// Shell ---------------------------------------------------------------
@@ -1253,7 +1256,7 @@ function Library:Window(options)
     local controls_layout = list(controls, 6, Enum.FillDirection.Horizontal)
     controls_layout.VerticalAlignment = Enum.VerticalAlignment.Center
 
-    local function control_button(icon_text, order, callback)
+    local function control_button(icon_name, order, callback)
         local button = create('TextButton', {
             Parent = controls,
             BackgroundColor3 = Theme.Element,
@@ -1264,20 +1267,31 @@ function Library:Window(options)
         })
         corner(button, 4)
         stroke(button, Theme.Stroke)
-        local text = label(button, icon_text, 12, 'bold', Theme.SubText)
-        text.Size = UDim2.new(1, 0, 1, 0)
-        text.TextXAlignment = Enum.TextXAlignment.Center
+        local icon_image = create('ImageLabel', {
+            Parent = button,
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(0.5, 0, 0.5, 0),
+            Size = UDim2.fromOffset(math.floor(control_size * 0.55), math.floor(control_size * 0.55)),
+            ImageColor3 = Theme.SubText,
+        })
+        Library:ApplyIcon(icon_image, icon_name)
         hover(button, Theme.Element, Theme.ElementHover)
         track(button.MouseButton1Click:Connect(callback))
-        return button, text
+        return button, icon_image
     end
 
-    control_button('—', 0, function()
+    local minimise_button, minimise_icon = control_button('chevron-up', 0, function()
         self:SetOpen(not self.Open)
     end)
-    control_button('✕', 1, function()
+    control_button('x', 1, function()
         self:SetVisible(false)
     end)
+
+    -- The minimise icon flips direction with state, so the same button always
+    -- shows which way it's about to move rather than a static dash.
+    self._minimise_icon = minimise_icon
+    self:_sync_minimise_icon()
 
     --// Content -------------------------------------------------------------
 
@@ -1379,6 +1393,24 @@ function Library:Window(options)
         end
     end))
 
+    --// Off-screen protection -------------------------------------------------
+
+    -- Tweens (open/close, minimise/restore) change Size every rendered frame,
+    -- and each of those changes also moves AbsoluteSize — so clamping off of
+    -- that signal keeps the panel on screen for the full duration of the
+    -- animation, not just once it lands. A one-shot clamp after a fixed delay
+    -- only catches the *end* of a tween; anything that puts the window
+    -- off-screen mid-animation, or moves/resizes it some other way entirely,
+    -- would otherwise slip through uncaught. The handler is idempotent (it
+    -- only writes Position when it actually needs to move), so reacting to
+    -- Position's own changed signal here can't recurse forever.
+    track(root:GetPropertyChangedSignal('AbsoluteSize'):Connect(function()
+        self:ClampToScreen()
+    end))
+    track(root:GetPropertyChangedSignal('Position'):Connect(function()
+        self:ClampToScreen()
+    end))
+
     --// Scale reactions ------------------------------------------------------
 
     track(Camera:GetPropertyChangedSignal('ViewportSize'):Connect(function()
@@ -1386,31 +1418,75 @@ function Library:Window(options)
         self:ClampToScreen()
     end))
     Library:ApplyScale()
+    self:ClampToScreen()
 
     --// Mobile toggle button -------------------------------------------------
 
     if mobile_button and UserInputService.TouchEnabled then
+        local mobile_icon_name = pick(options, 'menu', 'MobileButtonIcon', 'mobile_button_icon', 'FloatingButtonIcon')
+
+        -- The hit target is a plain, invisible square; everything drawn sits
+        -- on `visual`, which carries its own UIScale so a press can shrink
+        -- the circle+icon for tactile feedback without fighting the outer
+        -- UIScale that keeps the button sized to the viewport.
         local button = create('TextButton', {
             Name = 'mobile_toggle',
             Parent = ScreenGui,
-            BackgroundColor3 = Theme.Topbar,
+            BackgroundTransparency = 1,
             AnchorPoint = Vector2.new(0, 0),
             Position = UDim2.new(0, 14, 0, 90),
-            Size = UDim2.fromOffset(46, 46),
+            Size = UDim2.fromOffset(52, 52),
             Text = '',
             AutoButtonColor = false,
         })
-        corner(button, 23)
-        stroke(button, Theme.Stroke)
         register_scale(create('UIScale', { Parent = button }))
-        local icon = accent(create('ImageLabel', {
+
+        create('ImageLabel', {
+            Name = 'shadow',
+            Parent = button,
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(0.5, 0, 0.5, 3),
+            Size = UDim2.new(1, 30, 1, 30),
+            Image = 'rbxassetid://6014261993',
+            ImageColor3 = Color3.new(0, 0, 0),
+            ImageTransparency = 0.5,
+            ScaleType = Enum.ScaleType.Slice,
+            SliceCenter = Rect.new(49, 49, 450, 450),
+            ZIndex = 0,
+        })
+
+        -- Centre-anchored so the press-feedback UIScale below shrinks the
+        -- circle toward its own middle rather than toward the button's
+        -- top-left corner.
+        local visual = create('Frame', {
+            Name = 'visual',
             Parent = button,
             BackgroundTransparency = 1,
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.new(0.5, 0, 0.5, 0),
-            Size = UDim2.fromOffset(22, 22),
+            Size = UDim2.new(1, 0, 1, 0),
+        })
+        local press_scale = create('UIScale', { Parent = visual, Scale = 1 })
+
+        local circle = create('Frame', {
+            Name = 'circle',
+            Parent = visual,
+            BackgroundColor3 = Theme.Topbar,
+            Size = UDim2.new(1, 0, 1, 0),
+        })
+        corner(circle, 26)
+        accent(stroke(circle, Library.Accent, 0.35, 1.5), { 'Color' })
+
+        local icon = accent(create('ImageLabel', {
+            Name = 'icon',
+            Parent = circle,
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(0.5, 0, 0.5, 0),
+            Size = UDim2.fromOffset(24, 24),
         }), { 'ImageColor3' })
-        Library:ApplyIcon(icon, logo)
+        Library:ApplyIcon(icon, mobile_icon_name)
 
         -- Drag the button around; a tap that never moved toggles the window.
         local moved, press_start, button_start
@@ -1424,12 +1500,14 @@ function Library:Window(options)
             moved = false
             press_start = input_position(input)
             button_start = button.Position
+            tween(press_scale, QUAD, { Scale = 0.88 })
             local changed
             changed = input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
                     changed:Disconnect()
                     press_start = nil
                     release_drag('mobile_button')
+                    tween(press_scale, QUART, { Scale = 1 })
                     if not moved then
                         self:SetVisible(not self.Visible)
                     end
@@ -1457,6 +1535,15 @@ function Library:Window(options)
                 button_start.Y.Offset + delta.Y)
             self:_clamp_mobile_button()
         end))
+        -- Continuous protection, same as the window itself: catches a scale
+        -- change or a viewport resize shrinking the safe area, not just drags.
+        track(button:GetPropertyChangedSignal('AbsoluteSize'):Connect(function()
+            self:_clamp_mobile_button()
+        end))
+        track(button:GetPropertyChangedSignal('Position'):Connect(function()
+            self:_clamp_mobile_button()
+        end))
+        self:_clamp_mobile_button()
         self.MobileButton = button
         self.MobileIcon = icon
     end
@@ -1494,7 +1581,12 @@ end
 
 -- Keeps the panel wholly on screen. Position is read back as a pure offset
 -- (Scale is always 0 here) rather than from AbsolutePosition, which carries the
--- GUI inset and would drift the window a little further every call.
+-- GUI inset and would drift the window a little further every call. This is
+-- also wired to the root's own AbsoluteSize/Position-changed signals (see
+-- above), so it runs continuously through every tween rather than once
+-- before and once after — nothing can park the panel off-screen even for a
+-- single frame, whether that's a drag, a minimise/restore, a scale change, or
+-- anything else that moves or resizes it.
 function Window:ClampToScreen()
     local viewport = Camera and Camera.ViewportSize or Vector2.new(1280, 720)
     local root = self.Root
@@ -1504,17 +1596,6 @@ function Window:ClampToScreen()
     if x ~= root.Position.X.Offset or y ~= root.Position.Y.Offset then
         root.Position = UDim2.fromOffset(x, y)
     end
-end
-
--- A size tween moves the bottom edge, so the clamp has to run once the tween
--- has landed as well as while it plays.
-function Window:_clamp_through(duration)
-    self:ClampToScreen()
-    task.delay((duration or 0.3) + 0.05, function()
-        if self.Root and self.Root.Parent then
-            self:ClampToScreen()
-        end
-    end)
 end
 
 function Window:SetVisible(state)
@@ -1527,31 +1608,43 @@ function Window:SetVisible(state)
     end
 end
 
+function Window:_sync_minimise_icon()
+    if self._minimise_icon then
+        Library:ApplyIcon(self._minimise_icon, self.Open and 'chevron-up' or 'chevron-down')
+    end
+end
+
 function Window:SetOpen(state)
     -- Collapse to just the topbar, the original's minimise behaviour. The
-    -- top-left anchor means the header stays put through both directions.
+    -- top-left anchor means the header stays put through both directions;
+    -- the AbsoluteSize-changed connection clamps continuously as it resizes.
     self.Open = state and true or false
     local height = self.Open and WINDOW_HEIGHT or TOPBAR_HEIGHT
     tween(self.Root, QUINT, { Size = UDim2.fromOffset(WINDOW_WIDTH, height) })
-    self:_clamp_through(0.45)
+    self:_sync_minimise_icon()
 end
 
 function Window:_animate_in()
     local root = self.Root
+    -- Grows from the topbar back to whatever height it's actually supposed to
+    -- be at (self.Open may be true or false — it's whatever it was left at
+    -- before the panel was hidden, not forced open every time it's shown).
+    local target_height = self.Open and WINDOW_HEIGHT or TOPBAR_HEIGHT
     root.Size = UDim2.fromOffset(WINDOW_WIDTH, TOPBAR_HEIGHT)
     root.BackgroundTransparency = 1
-    tween(root, QUINT, { Size = UDim2.fromOffset(WINDOW_WIDTH, WINDOW_HEIGHT), BackgroundTransparency = 0 })
+    tween(root, QUINT, { Size = UDim2.fromOffset(WINDOW_WIDTH, target_height), BackgroundTransparency = 0 })
     tween(self.RootStroke, QUART, { Transparency = 0 })
     tween(self.Shadow, QUART, { ImageTransparency = 0.55 })
     tween(self.Logo, QUART, { ImageTransparency = 0 })
     tween(self.TitleLabel, QUART, { TextTransparency = 0 })
     tween(self.SubtitleLabel, QUART, { TextTransparency = 0 })
-    self.Open = true
-    self:_clamp_through(0.45)
 end
 
 function Window:_animate_out()
     local root = self.Root
+    -- Only the topbar itself needs to stay visible while hidden, so the next
+    -- _animate_in always grows from the same TOPBAR_HEIGHT starting point
+    -- regardless of whether the panel was expanded or minimised when closed.
     tween(root, QUART, { Size = UDim2.fromOffset(WINDOW_WIDTH, TOPBAR_HEIGHT), BackgroundTransparency = 1 })
     tween(self.RootStroke, QUAD, { Transparency = 1 })
     tween(self.Shadow, QUAD, { ImageTransparency = 1 })
