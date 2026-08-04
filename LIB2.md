@@ -70,27 +70,68 @@ Option keys are read case-insensitively across common spellings (`Title`/`title`
 
 Anywhere an `Icon` is accepted you can pass a [Lucide](https://lucide.dev) name
 (`'house'`, `'ArrowRight'`, `'arrow-right'`), a bare asset id (`'6034509993'`) or a
-full `rbxassetid://` string. Asset ids are set directly; Lucide names are fetched
-from the icon API in [`iamdookie1/web3`](https://github.com/iamdookie1/web3),
-decoded from `alpha8` coverage bytes into an `EditableImage`, and cached per
-name + size + stroke + padding.
+full `rbxassetid://` string. Asset ids are set directly; Lucide names hit the icon
+API in [`iamdookie1/web3`](https://github.com/iamdookie1/web3) —
+`GET /icon?name=house&size=64&format=alpha8` — and the response is turned into a
+real icon like this:
+
+1. `payload.data` (base64) is decoded into raw bytes — one coverage byte per pixel,
+   row-major, top-left origin, exactly as the API describes it.
+2. `payload.width` / `payload.height` — **read from the response, not assumed** —
+   size the `EditableImage`, so a mismatched or clamped server-side size (the API
+   clamps to 1–1024) still renders correctly instead of reading out of bounds.
+3. Each byte becomes one pixel's alpha channel in an RGBA buffer, RGB left white,
+   and the buffer is written to the image in one `WritePixelsBuffer` call.
+4. The `ImageLabel`/`ImageButton` gets `ImageContent = Content.fromObject(image)`.
+
+Every icon in the panel is tinted via `ImageColor3` rather than baked into the
+fetch, so the same white source image serves every accent colour and every theme
+change — no re-fetch, just a property flip.
+
+### What `size` changes
+
+`GET /icon?name=house&size=64` renders the icon at exactly 64×64 source pixels —
+`size` is the rendered resolution of what gets fetched, not the size it displays
+at on screen; those are set independently (the `ImageLabel`'s own `Size`).
+Requesting **larger** than the display size costs more bytes (`byteLength` grows
+with the square of `size`) for no visible gain — downscaling a big source to a
+small frame looks identical to requesting the small size directly, since Roblox
+filters on the way down. Requesting **smaller** than the display size is the one
+that actually costs quality: the source gets stretched up to fill the frame and
+visibly blurs / pixelates, exactly as the `iamdookie1/web3` README warns.
+
+The panel exploits the first half of that trade-off for crispness headroom: every
+built-in icon (tabs, the topbar logo, minimise/close, the mobile button) requests
+**roughly twice its on-screen size**, not a flat default. The window's own
+`UIScale` can run up to 2×, so a 16px tab icon requests at 32px — big enough to
+stay sharp at maximum zoom, without fetching a wastefully large 64px source for
+something that never displays past 32px. `Padding` scales down to match (the
+API's 4–6px suggestion is sized for 64px icons and would eat a visible chunk out
+of a 16px one), so small glyphs don't shrink inside their own frame.
 
 ```lua
 Centrl:SetIconSource('https://your-deployment.vercel.app')  -- or Window{ IconApi = ... }
-Centrl.Icons.Size = 64        -- render resolution
+Centrl.Icons.Size = 64        -- default render resolution for calls that don't override it
 Centrl.Icons.StrokeWidth = 2
 Centrl.Icons.Padding = 4      -- keeps round caps off the frame edge
 Centrl.Icons.Enabled = false  -- ignore Lucide names entirely
-Centrl:ApplyIcon(myImageLabel, 'sword')   -- never yields
-Centrl:GetIcon('sword')                   -- yields, returns the EditableImage
+Centrl:ApplyIcon(myImageLabel, 'sword')                        -- never yields
+Centrl:ApplyIcon(myImageLabel, 'sword', { Size = 48 })         -- override per call
+Centrl:GetIcon('sword')                                        -- yields, returns the EditableImage
 ```
+
+Results are cached per name + size + stroke + padding, so calling the same icon at
+the same options twice — including the automatic tab/control sizing above — costs
+one fetch, not two.
 
 Fetching happens on the client — an executor has HTTP there, so there's no
 `RemoteFunction` hop like the `roblox/LucideIcons.lua` module in that repo needs.
-Icons are requested white and tinted with `ImageColor3`, so one fetch serves every
-accent. It needs `AssetService:CreateEditableImage`; where that's unavailable, or
-when the API can't be reached, the icon is skipped with one warning and everything
-else still works.
+It needs `AssetService:CreateEditableImage`; where that's unavailable, or when the
+API can't be reached, the icon is skipped with one warning and everything else
+still works. `Centrl:ClearIconCache()` (also called automatically by
+`SetIconSource` and `Unload`) destroys every cached `EditableImage` rather than
+just dropping the table, so switching deployments or tearing down the UI doesn't
+leak instances.
 
 `Icons.BaseUrl` defaults to `https://web3-six-beta.vercel.app`, the deployment this
 library ships against. Point it elsewhere with `Icons.BaseUrl`/`IconApi` if you run

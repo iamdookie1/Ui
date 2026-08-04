@@ -403,6 +403,14 @@ local icon_cache = {}
 local icon_warned = false
 
 function Library:ClearIconCache()
+    -- Cached values are EditableImage instances (or `false` for a known-bad
+    -- lookup) — table.clear alone would drop the references without
+    -- destroying the instances themselves, leaking one per cached icon.
+    for _, image in pairs(icon_cache) do
+        if typeof(image) == 'Instance' then
+            image:Destroy()
+        end
+    end
     table.clear(icon_cache)
     icon_warned = false
 end
@@ -596,6 +604,17 @@ local function is_direct_asset(text)
         or string.match(text, '^rbxthumb://')
         or string.match(text, '^http')
         or string.match(text, '^%d+$')
+end
+
+-- Small UI icons (tabs, the minimise/close controls, the mobile button) are
+-- requested at roughly twice their on-screen size rather than the library's
+-- 64px default: the panel's own UIScale runs up to 2x, and fetching ahead of
+-- that keeps them crisp at max zoom instead of only at 1x. Padding scales
+-- down with them — the API's 4-6px suggestion is sized for 64px icons and
+-- would eat a visible chunk out of a 16-24px glyph otherwise.
+local function ui_icon_options(display_px)
+    local size = math.clamp(math.floor(display_px * 2 + 0.5), 16, 128)
+    return { Size = size, Padding = math.max(1, math.floor(size / 16)) }
 end
 
 -- Accepts a Lucide name ('house', 'ArrowRight'), an asset id, or a full
@@ -1218,7 +1237,7 @@ function Library:Window(options)
         Size = UDim2.fromOffset(16, 16),
         ImageTransparency = 1,
     }), { 'ImageColor3' })
-    Library:ApplyIcon(logo_image, logo)
+    Library:ApplyIcon(logo_image, logo, ui_icon_options(16))
 
     local title_label = accent(label(topbar, title, 15, 'bold'), { 'TextColor3' })
     title_label.Name = 'work'
@@ -1256,6 +1275,9 @@ function Library:Window(options)
     local controls_layout = list(controls, 6, Enum.FillDirection.Horizontal)
     controls_layout.VerticalAlignment = Enum.VerticalAlignment.Center
 
+    local control_icon_px = math.floor(control_size * 0.55)
+    local control_icon_options = ui_icon_options(control_icon_px)
+
     local function control_button(icon_name, order, callback)
         local button = create('TextButton', {
             Parent = controls,
@@ -1272,10 +1294,10 @@ function Library:Window(options)
             BackgroundTransparency = 1,
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.new(0.5, 0, 0.5, 0),
-            Size = UDim2.fromOffset(math.floor(control_size * 0.55), math.floor(control_size * 0.55)),
+            Size = UDim2.fromOffset(control_icon_px, control_icon_px),
             ImageColor3 = Theme.SubText,
         })
-        Library:ApplyIcon(icon_image, icon_name)
+        Library:ApplyIcon(icon_image, icon_name, control_icon_options)
         hover(button, Theme.Element, Theme.ElementHover)
         track(button.MouseButton1Click:Connect(callback))
         return button, icon_image
@@ -1291,6 +1313,7 @@ function Library:Window(options)
     -- The minimise icon flips direction with state, so the same button always
     -- shows which way it's about to move rather than a static dash.
     self._minimise_icon = minimise_icon
+    self._minimise_icon_options = control_icon_options
     self:_sync_minimise_icon()
 
     --// Content -------------------------------------------------------------
@@ -1486,7 +1509,7 @@ function Library:Window(options)
             Position = UDim2.new(0.5, 0, 0.5, 0),
             Size = UDim2.fromOffset(24, 24),
         }), { 'ImageColor3' })
-        Library:ApplyIcon(icon, mobile_icon_name)
+        Library:ApplyIcon(icon, mobile_icon_name, ui_icon_options(24))
 
         -- Drag the button around; a tap that never moved toggles the window.
         local moved, press_start, button_start
@@ -1610,7 +1633,7 @@ end
 
 function Window:_sync_minimise_icon()
     if self._minimise_icon then
-        Library:ApplyIcon(self._minimise_icon, self.Open and 'chevron-up' or 'chevron-down')
+        Library:ApplyIcon(self._minimise_icon, self.Open and 'chevron-up' or 'chevron-down', self._minimise_icon_options)
     end
 end
 
@@ -1693,6 +1716,7 @@ function Library:Unload()
         ScreenGui:Destroy()
     end)
     table.clear(Library._windows)
+    Library:ClearIconCache()
 end
 
 Library.Destroy = Library.Unload
@@ -1787,7 +1811,7 @@ function Window:Tab(options)
             Size = UDim2.fromOffset(16, 16),
             ImageColor3 = Theme.SubText,
         })
-        Library:ApplyIcon(icon_image, icon)
+        Library:ApplyIcon(icon_image, icon, ui_icon_options(16))
     end
 
     local title_label = label(button, title, 13, 'semi', Theme.SubText)
