@@ -371,6 +371,278 @@ local function deserialize_color(value)
     return nil
 end
 
+--// Lucide icons ------------------------------------------------------------
+
+-- Icons come from the Lucide raster API (github.com/iamdookie1/web3). Roblox
+-- can't draw SVG, so the service rasterises each icon and returns one coverage
+-- byte per pixel; those bytes become an EditableImage here. Unlike the module
+-- in that repo there's no RemoteFunction hop — an executor has HTTP on the
+-- client, so the fetch, the decode and the image build all happen in place.
+--
+-- Point BaseUrl at your own deployment. Icons are requested white and tinted
+-- with ImageColor3, so one fetch serves every accent.
+
+local AssetService = cloneref(game:GetService('AssetService'))
+
+Library.Icons = {
+    BaseUrl = 'https://web3-six-beta.vercel.app',
+    Size = 64,
+    StrokeWidth = 2,
+    Padding = 4,
+    Enabled = true,
+}
+
+function Library:SetIconSource(url)
+    if typeof(url) == 'string' and url ~= '' then
+        Library.Icons.BaseUrl = (string.gsub(url, '/+$', ''))
+        Library:ClearIconCache()
+    end
+end
+
+local icon_cache = {}
+local icon_warned = false
+
+function Library:ClearIconCache()
+    -- Cached values are EditableImage instances (or `false` for a known-bad
+    -- lookup) — table.clear alone would drop the references without
+    -- destroying the instances themselves, leaking one per cached icon.
+    for _, image in pairs(icon_cache) do
+        if typeof(image) == 'Instance' then
+            image:Destroy()
+        end
+    end
+    table.clear(icon_cache)
+    icon_warned = false
+end
+
+local http_request = (syn and syn.request)
+    or (http and http.request)
+    or http_request
+    or request
+
+local function http_get(url)
+    if typeof(http_request) == 'function' then
+        local ok, response = pcall(http_request, { Url = url, Method = 'GET' })
+        if ok and typeof(response) == 'table' then
+            local status = response.StatusCode or response.Status or 200
+            if status < 400 and response.Body then
+                return response.Body
+            end
+            return nil, 'http ' .. tostring(status)
+        end
+    end
+    local ok, body = pcall(function()
+        return game:HttpGet(url, true)
+    end)
+    if ok and typeof(body) == 'string' then
+        return body
+    end
+    return nil, tostring(body)
+end
+
+local B64_LOOKUP = {}
+do
+    local alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    for index = 1, #alphabet do
+        B64_LOOKUP[string.byte(alphabet, index)] = index - 1
+    end
+end
+
+local native_base64 = (crypt and crypt.base64decode)
+    or (crypt and crypt.base64 and crypt.base64.decode)
+    or base64_decode
+    or (base64 and base64.decode)
+
+local function base64_to_bytes(text)
+    if typeof(native_base64) == 'function' then
+        local ok, decoded = pcall(native_base64, text)
+        if ok and typeof(decoded) == 'string' then
+            return decoded
+        end
+    end
+    local out = table.create(#text // 4 * 3)
+    local accumulator, bits = 0, 0
+    for index = 1, #text do
+        local value = B64_LOOKUP[string.byte(text, index)]
+        if value then
+            accumulator = accumulator * 64 + value
+            bits = bits + 6
+            if bits >= 8 then
+                bits = bits - 8
+                local byte = accumulator // (2 ^ bits)
+                accumulator = accumulator - byte * (2 ^ bits)
+                table.insert(out, string.char(byte))
+            end
+        end
+    end
+    return table.concat(out)
+end
+
+-- Expands the coverage bytes into the RGBA buffer EditableImage wants. The
+-- colour is left white on purpose; call sites tint with ImageColor3.
+local function build_editable_image(width, height, alpha)
+    local ok, image = pcall(function()
+        return AssetService:CreateEditableImage({ Size = Vector2.new(width, height) })
+    end)
+    if not ok or not image then
+        ok, image = pcall(function()
+            return AssetService:CreateEditableImage(Vector2.new(width, height))
+        end)
+    end
+    if not ok or not image then
+        return nil
+    end
+
+    local count = width * height
+    local written = pcall(function()
+        local pixels = buffer.create(count * 4)
+        for index = 0, count - 1 do
+            local offset = index * 4
+            buffer.writeu8(pixels, offset, 255)
+            buffer.writeu8(pixels, offset + 1, 255)
+            buffer.writeu8(pixels, offset + 2, 255)
+            buffer.writeu8(pixels, offset + 3, string.byte(alpha, index + 1) or 0)
+        end
+        image:WritePixelsBuffer(Vector2.zero, Vector2.new(width, height), pixels)
+    end)
+
+    if not written then
+        -- Older EditableImage builds only expose the float-table writer.
+        local fallback = pcall(function()
+            local pixels = table.create(count * 4)
+            for index = 0, count - 1 do
+                local offset = index * 4
+                pixels[offset + 1] = 1
+                pixels[offset + 2] = 1
+                pixels[offset + 3] = 1
+                pixels[offset + 4] = (string.byte(alpha, index + 1) or 0) / 255
+            end
+            image:WritePixels(Vector2.zero, Vector2.new(width, height), pixels)
+        end)
+        if not fallback then
+            return nil
+        end
+    end
+
+    return image
+end
+
+local function apply_editable_image(target, image)
+    local ok = pcall(function()
+        target.ImageContent = Content.fromObject(image)
+    end)
+    if ok then
+        return true
+    end
+    -- Pre-Content builds attach the EditableImage as a child instead.
+    return (pcall(function()
+        image.Parent = target
+    end))
+end
+
+local function icon_url(name, options)
+    return string.format('%s/icon?name=%s&size=%d&strokeWidth=%s&padding=%d&format=alpha8',
+        Library.Icons.BaseUrl,
+        (string.gsub(tostring(name), '[^%w%-_]', '')),
+        options.size,
+        tostring(options.stroke),
+        options.padding)
+end
+
+-- Yields. Returns an EditableImage for a Lucide icon name, or nil.
+function Library:GetIcon(name, options)
+    options = options or {}
+    local resolved = {
+        size = math.clamp(tonumber(options.Size or options.size) or Library.Icons.Size, 1, 1024),
+        stroke = math.clamp(tonumber(options.StrokeWidth or options.stroke) or Library.Icons.StrokeWidth, 0.1, 6),
+        padding = math.max(0, tonumber(options.Padding or options.padding) or Library.Icons.Padding),
+    }
+    local key = string.format('%s|%d|%s|%d', string.lower(tostring(name)), resolved.size, tostring(resolved.stroke), resolved.padding)
+
+    local cached = icon_cache[key]
+    if cached ~= nil then
+        return cached or nil
+    end
+
+    local body, err = http_get(icon_url(name, resolved))
+    if not body then
+        if not icon_warned then
+            icon_warned = true
+            warn('[centrl] icon fetch failed (' .. tostring(err) .. '). Set Library.Icons.BaseUrl / Library:SetIconSource(url) to your Lucide API deployment.')
+        end
+        icon_cache[key] = false
+        return nil
+    end
+
+    local decoded, payload = pcall(function()
+        return HttpService:JSONDecode(body)
+    end)
+    if not decoded or typeof(payload) ~= 'table' or not payload.ok then
+        local message = typeof(payload) == 'table' and payload.error or 'malformed response'
+        if typeof(payload) == 'table' and payload.suggestions then
+            message = message .. ' — did you mean: ' .. table.concat(payload.suggestions, ', ') .. '?'
+        end
+        warn('[centrl] icon "' .. tostring(name) .. '": ' .. tostring(message))
+        icon_cache[key] = false
+        return nil
+    end
+
+    local alpha = base64_to_bytes(payload.data)
+    if #alpha < payload.width * payload.height then
+        icon_cache[key] = false
+        return nil
+    end
+
+    local image = build_editable_image(payload.width, payload.height, alpha)
+    icon_cache[key] = image or false
+    return image
+end
+
+local function is_direct_asset(text)
+    return string.match(text, '^rbxassetid://')
+        or string.match(text, '^rbxasset://')
+        or string.match(text, '^rbxthumb://')
+        or string.match(text, '^http')
+        or string.match(text, '^%d+$')
+end
+
+-- Small UI icons (tabs, the minimise/close controls, the mobile button) are
+-- requested at roughly twice their on-screen size rather than the library's
+-- 64px default: the panel's own UIScale runs up to 2x, and fetching ahead of
+-- that keeps them crisp at max zoom instead of only at 1x. Padding scales
+-- down with them — the API's 4-6px suggestion is sized for 64px icons and
+-- would eat a visible chunk out of a 16-24px glyph otherwise.
+local function ui_icon_options(display_px)
+    local size = math.clamp(math.floor(display_px * 2 + 0.5), 16, 128)
+    return { Size = size, Padding = math.max(1, math.floor(size / 16)) }
+end
+
+-- Accepts a Lucide name ('house', 'ArrowRight'), an asset id, or a full
+-- rbxassetid string, and never yields the caller.
+function Library:ApplyIcon(target, icon, options)
+    if not target or icon == nil or icon == '' then
+        return
+    end
+    local text = tostring(icon)
+    if string.match(text, '^%d+$') then
+        target.Image = 'rbxassetid://' .. text
+        return
+    end
+    if is_direct_asset(text) then
+        target.Image = text
+        return
+    end
+    if not Library.Icons.Enabled then
+        return
+    end
+    task.spawn(function()
+        local image = Library:GetIcon(text, options)
+        if image and target.Parent then
+            apply_editable_image(target, image)
+        end
+    end)
+end
+
 --// Config storage ----------------------------------------------------------
 
 local Config = {
@@ -608,6 +880,18 @@ function Library:ApplyScale()
             ui_scale.Scale = Library._scale
         end
     end
+    -- Scaling changes how much room everything takes; deferred so AbsoluteSize
+    -- has caught up before anything is measured against the viewport.
+    task.defer(function()
+        for _, window in pairs(Library._windows) do
+            if window.ClampToScreen and window.Root and window.Root.Parent then
+                window:ClampToScreen()
+            end
+            if window._clamp_mobile_button then
+                window:_clamp_mobile_button()
+            end
+        end
+    end)
 end
 
 function Library:SetScale(value)
@@ -845,7 +1129,11 @@ function Library:Window(options)
     local config_enabled = pick(options, true, 'ConfigEnabled', 'SaveConfig', 'config_enabled')
     local mobile_button = pick(options, true, 'MobileButton', 'mobile_button', 'FloatingButton')
     local settings_tab = pick(options, true, 'SettingsTab', 'settings_tab')
+    local icon_api = pick(options, nil, 'IconApi', 'icon_api', 'IconSource', 'LucideApi')
 
+    if icon_api then
+        Library:SetIconSource(icon_api)
+    end
     Config.folder = tostring(folder)
     Config.enabled = config_enabled and true or false
     if accent_color then
@@ -857,16 +1145,27 @@ function Library:Window(options)
     local self = setmetatable({}, Window)
     self.Tabs = {}
     self.ToggleKey = toggle_key
-    self.Open = false
+    -- Open tracks expanded-vs-minimised and is independent of Visible (whether
+    -- the whole panel is shown at all), so hiding and reshowing the panel
+    -- restores whichever of those two states it was actually left in.
+    self.Open = true
     self.Visible = true
 
     --// Shell ---------------------------------------------------------------
 
+    -- Anchored top-left, not centered: with a centered anchor every height
+    -- change (minimise, restore, the open animation) moves the top edge by half
+    -- the difference, so the panel creeps up the screen each time it reopens.
+    -- Pinning the top-left means collapsing and expanding leave it exactly
+    -- where it was, and clamping is a straight comparison against the viewport.
+    local viewport = Camera and Camera.ViewportSize or Vector2.new(1280, 720)
     local root = create('Frame', {
         Name = 'centrl',
         Parent = ScreenGui,
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.new(0.5, 0, 0.5, 0),
+        AnchorPoint = Vector2.new(0, 0),
+        Position = UDim2.fromOffset(
+            math.max(0, math.round((viewport.X - WINDOW_WIDTH * Library._scale) / 2)),
+            math.max(0, math.round((viewport.Y - WINDOW_HEIGHT * Library._scale) / 2))),
         Size = UDim2.fromOffset(WINDOW_WIDTH, WINDOW_HEIGHT),
         BackgroundColor3 = Theme.Background,
         BackgroundTransparency = 1,
@@ -936,9 +1235,9 @@ function Library:Window(options)
         Position = UDim2.new(0, 13, 0.5, 0),
         AnchorPoint = Vector2.new(0, 0.5),
         Size = UDim2.fromOffset(16, 16),
-        Image = logo,
         ImageTransparency = 1,
     }), { 'ImageColor3' })
+    Library:ApplyIcon(logo_image, logo, ui_icon_options(16))
 
     local title_label = accent(label(topbar, title, 15, 'bold'), { 'TextColor3' })
     title_label.Name = 'work'
@@ -976,7 +1275,10 @@ function Library:Window(options)
     local controls_layout = list(controls, 6, Enum.FillDirection.Horizontal)
     controls_layout.VerticalAlignment = Enum.VerticalAlignment.Center
 
-    local function control_button(icon_text, order, callback)
+    local control_icon_px = math.floor(control_size * 0.55)
+    local control_icon_options = ui_icon_options(control_icon_px)
+
+    local function control_button(icon_name, order, callback)
         local button = create('TextButton', {
             Parent = controls,
             BackgroundColor3 = Theme.Element,
@@ -987,20 +1289,32 @@ function Library:Window(options)
         })
         corner(button, 4)
         stroke(button, Theme.Stroke)
-        local text = label(button, icon_text, 12, 'bold', Theme.SubText)
-        text.Size = UDim2.new(1, 0, 1, 0)
-        text.TextXAlignment = Enum.TextXAlignment.Center
+        local icon_image = create('ImageLabel', {
+            Parent = button,
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(0.5, 0, 0.5, 0),
+            Size = UDim2.fromOffset(control_icon_px, control_icon_px),
+            ImageColor3 = Theme.SubText,
+        })
+        Library:ApplyIcon(icon_image, icon_name, control_icon_options)
         hover(button, Theme.Element, Theme.ElementHover)
         track(button.MouseButton1Click:Connect(callback))
-        return button, text
+        return button, icon_image
     end
 
-    control_button('—', 0, function()
+    local minimise_button, minimise_icon = control_button('chevron-up', 0, function()
         self:SetOpen(not self.Open)
     end)
-    control_button('✕', 1, function()
+    control_button('x', 1, function()
         self:SetVisible(false)
     end)
+
+    -- The minimise icon flips direction with state, so the same button always
+    -- shows which way it's about to move rather than a static dash.
+    self._minimise_icon = minimise_icon
+    self._minimise_icon_options = control_icon_options
+    self:_sync_minimise_icon()
 
     --// Content -------------------------------------------------------------
 
@@ -1088,15 +1402,36 @@ function Library:Window(options)
             return
         end
         local delta = input_position(input) - drag_start
-        root.Position = UDim2.new(
-            start_position.X.Scale, start_position.X.Offset + delta.X,
-            start_position.Y.Scale, start_position.Y.Offset + delta.Y)
+        root.Position = UDim2.fromOffset(
+            start_position.X.Offset + delta.X,
+            start_position.Y.Offset + delta.Y)
+        -- Clamped every frame of the drag rather than on release, so the panel
+        -- stops at the edge instead of snapping back from off-screen.
+        self:ClampToScreen()
     end))
     track(UserInputService.InputEnded:Connect(function(input)
         if is_press(input) then
             drag_start = nil
             release_drag('window')
         end
+    end))
+
+    --// Off-screen protection -------------------------------------------------
+
+    -- Tweens (open/close, minimise/restore) change Size every rendered frame,
+    -- and each of those changes also moves AbsoluteSize — so clamping off of
+    -- that signal keeps the panel on screen for the full duration of the
+    -- animation, not just once it lands. A one-shot clamp after a fixed delay
+    -- only catches the *end* of a tween; anything that puts the window
+    -- off-screen mid-animation, or moves/resizes it some other way entirely,
+    -- would otherwise slip through uncaught. The handler is idempotent (it
+    -- only writes Position when it actually needs to move), so reacting to
+    -- Position's own changed signal here can't recurse forever.
+    track(root:GetPropertyChangedSignal('AbsoluteSize'):Connect(function()
+        self:ClampToScreen()
+    end))
+    track(root:GetPropertyChangedSignal('Position'):Connect(function()
+        self:ClampToScreen()
     end))
 
     --// Scale reactions ------------------------------------------------------
@@ -1106,31 +1441,75 @@ function Library:Window(options)
         self:ClampToScreen()
     end))
     Library:ApplyScale()
+    self:ClampToScreen()
 
     --// Mobile toggle button -------------------------------------------------
 
     if mobile_button and UserInputService.TouchEnabled then
+        local mobile_icon_name = pick(options, 'menu', 'MobileButtonIcon', 'mobile_button_icon', 'FloatingButtonIcon')
+
+        -- The hit target is a plain, invisible square; everything drawn sits
+        -- on `visual`, which carries its own UIScale so a press can shrink
+        -- the circle+icon for tactile feedback without fighting the outer
+        -- UIScale that keeps the button sized to the viewport.
         local button = create('TextButton', {
             Name = 'mobile_toggle',
             Parent = ScreenGui,
-            BackgroundColor3 = Theme.Topbar,
+            BackgroundTransparency = 1,
             AnchorPoint = Vector2.new(0, 0),
             Position = UDim2.new(0, 14, 0, 90),
-            Size = UDim2.fromOffset(46, 46),
+            Size = UDim2.fromOffset(52, 52),
             Text = '',
             AutoButtonColor = false,
         })
-        corner(button, 23)
-        stroke(button, Theme.Stroke)
         register_scale(create('UIScale', { Parent = button }))
-        local icon = accent(create('ImageLabel', {
+
+        create('ImageLabel', {
+            Name = 'shadow',
+            Parent = button,
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(0.5, 0, 0.5, 3),
+            Size = UDim2.new(1, 30, 1, 30),
+            Image = 'rbxassetid://6014261993',
+            ImageColor3 = Color3.new(0, 0, 0),
+            ImageTransparency = 0.5,
+            ScaleType = Enum.ScaleType.Slice,
+            SliceCenter = Rect.new(49, 49, 450, 450),
+            ZIndex = 0,
+        })
+
+        -- Centre-anchored so the press-feedback UIScale below shrinks the
+        -- circle toward its own middle rather than toward the button's
+        -- top-left corner.
+        local visual = create('Frame', {
+            Name = 'visual',
             Parent = button,
             BackgroundTransparency = 1,
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.new(0.5, 0, 0.5, 0),
-            Size = UDim2.fromOffset(22, 22),
-            Image = logo,
+            Size = UDim2.new(1, 0, 1, 0),
+        })
+        local press_scale = create('UIScale', { Parent = visual, Scale = 1 })
+
+        local circle = create('Frame', {
+            Name = 'circle',
+            Parent = visual,
+            BackgroundColor3 = Theme.Topbar,
+            Size = UDim2.new(1, 0, 1, 0),
+        })
+        corner(circle, 26)
+        accent(stroke(circle, Library.Accent, 0.35, 1.5), { 'Color' })
+
+        local icon = accent(create('ImageLabel', {
+            Name = 'icon',
+            Parent = circle,
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(0.5, 0, 0.5, 0),
+            Size = UDim2.fromOffset(24, 24),
         }), { 'ImageColor3' })
+        Library:ApplyIcon(icon, mobile_icon_name, ui_icon_options(24))
 
         -- Drag the button around; a tap that never moved toggles the window.
         local moved, press_start, button_start
@@ -1144,18 +1523,28 @@ function Library:Window(options)
             moved = false
             press_start = input_position(input)
             button_start = button.Position
+            tween(press_scale, QUAD, { Scale = 0.88 })
             local changed
             changed = input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
                     changed:Disconnect()
                     press_start = nil
                     release_drag('mobile_button')
+                    tween(press_scale, QUART, { Scale = 1 })
                     if not moved then
                         self:SetVisible(not self.Visible)
                     end
                 end
             end)
         end))
+        function self:_clamp_mobile_button()
+            local viewport = Camera and Camera.ViewportSize or Vector2.new(1280, 720)
+            local size = button.AbsoluteSize
+            button.Position = UDim2.fromOffset(
+                math.clamp(button.Position.X.Offset, 0, math.max(0, viewport.X - size.X)),
+                math.clamp(button.Position.Y.Offset, 0, math.max(0, viewport.Y - size.Y)))
+        end
+
         track(UserInputService.InputChanged:Connect(function(input)
             if not press_start or not is_move(input) then
                 return
@@ -1164,10 +1553,20 @@ function Library:Window(options)
             if delta.Magnitude > 6 then
                 moved = true
             end
-            button.Position = UDim2.new(
-                button_start.X.Scale, button_start.X.Offset + delta.X,
-                button_start.Y.Scale, button_start.Y.Offset + delta.Y)
+            button.Position = UDim2.fromOffset(
+                button_start.X.Offset + delta.X,
+                button_start.Y.Offset + delta.Y)
+            self:_clamp_mobile_button()
         end))
+        -- Continuous protection, same as the window itself: catches a scale
+        -- change or a viewport resize shrinking the safe area, not just drags.
+        track(button:GetPropertyChangedSignal('AbsoluteSize'):Connect(function()
+            self:_clamp_mobile_button()
+        end))
+        track(button:GetPropertyChangedSignal('Position'):Connect(function()
+            self:_clamp_mobile_button()
+        end))
+        self:_clamp_mobile_button()
         self.MobileButton = button
         self.MobileIcon = icon
     end
@@ -1203,14 +1602,23 @@ function Library:Window(options)
     return self
 end
 
+-- Keeps the panel wholly on screen. Position is read back as a pure offset
+-- (Scale is always 0 here) rather than from AbsolutePosition, which carries the
+-- GUI inset and would drift the window a little further every call. This is
+-- also wired to the root's own AbsoluteSize/Position-changed signals (see
+-- above), so it runs continuously through every tween rather than once
+-- before and once after — nothing can park the panel off-screen even for a
+-- single frame, whether that's a drag, a minimise/restore, a scale change, or
+-- anything else that moves or resizes it.
 function Window:ClampToScreen()
     local viewport = Camera and Camera.ViewportSize or Vector2.new(1280, 720)
-    local size = self.Root.AbsoluteSize
-    local position = self.Root.AbsolutePosition
-    local half = size / 2
-    local x = math.clamp(position.X + half.X, half.X, math.max(half.X, viewport.X - half.X))
-    local y = math.clamp(position.Y + half.Y, half.Y, math.max(half.Y, viewport.Y - half.Y))
-    self.Root.Position = UDim2.fromOffset(x, y)
+    local root = self.Root
+    local size = root.AbsoluteSize
+    local x = math.clamp(root.Position.X.Offset, 0, math.max(0, viewport.X - size.X))
+    local y = math.clamp(root.Position.Y.Offset, 0, math.max(0, viewport.Y - size.Y))
+    if x ~= root.Position.X.Offset or y ~= root.Position.Y.Offset then
+        root.Position = UDim2.fromOffset(x, y)
+    end
 end
 
 function Window:SetVisible(state)
@@ -1223,29 +1631,43 @@ function Window:SetVisible(state)
     end
 end
 
+function Window:_sync_minimise_icon()
+    if self._minimise_icon then
+        Library:ApplyIcon(self._minimise_icon, self.Open and 'chevron-up' or 'chevron-down', self._minimise_icon_options)
+    end
+end
+
 function Window:SetOpen(state)
-    -- Collapse to just the topbar, the original's minimise behaviour.
+    -- Collapse to just the topbar, the original's minimise behaviour. The
+    -- top-left anchor means the header stays put through both directions;
+    -- the AbsoluteSize-changed connection clamps continuously as it resizes.
     self.Open = state and true or false
     local height = self.Open and WINDOW_HEIGHT or TOPBAR_HEIGHT
     tween(self.Root, QUINT, { Size = UDim2.fromOffset(WINDOW_WIDTH, height) })
+    self:_sync_minimise_icon()
 end
 
 function Window:_animate_in()
     local root = self.Root
+    -- Grows from the topbar back to whatever height it's actually supposed to
+    -- be at (self.Open may be true or false — it's whatever it was left at
+    -- before the panel was hidden, not forced open every time it's shown).
+    local target_height = self.Open and WINDOW_HEIGHT or TOPBAR_HEIGHT
     root.Size = UDim2.fromOffset(WINDOW_WIDTH, TOPBAR_HEIGHT)
     root.BackgroundTransparency = 1
-    tween(root, QUINT, { Size = UDim2.fromOffset(WINDOW_WIDTH, WINDOW_HEIGHT), BackgroundTransparency = 0 })
+    tween(root, QUINT, { Size = UDim2.fromOffset(WINDOW_WIDTH, target_height), BackgroundTransparency = 0 })
     tween(self.RootStroke, QUART, { Transparency = 0 })
     tween(self.Shadow, QUART, { ImageTransparency = 0.55 })
     tween(self.Logo, QUART, { ImageTransparency = 0 })
     tween(self.TitleLabel, QUART, { TextTransparency = 0 })
     tween(self.SubtitleLabel, QUART, { TextTransparency = 0 })
-    self.Open = true
-    self:ClampToScreen()
 end
 
 function Window:_animate_out()
     local root = self.Root
+    -- Only the topbar itself needs to stay visible while hidden, so the next
+    -- _animate_in always grows from the same TOPBAR_HEIGHT starting point
+    -- regardless of whether the panel was expanded or minimised when closed.
     tween(root, QUART, { Size = UDim2.fromOffset(WINDOW_WIDTH, TOPBAR_HEIGHT), BackgroundTransparency = 1 })
     tween(self.RootStroke, QUAD, { Transparency = 1 })
     tween(self.Shadow, QUAD, { ImageTransparency = 1 })
@@ -1294,6 +1716,7 @@ function Library:Unload()
         ScreenGui:Destroy()
     end)
     table.clear(Library._windows)
+    Library:ClearIconCache()
 end
 
 Library.Destroy = Library.Unload
@@ -1385,10 +1808,10 @@ function Window:Tab(options)
             BackgroundTransparency = 1,
             AnchorPoint = Vector2.new(0, 0.5),
             Position = UDim2.new(0, 10, 0.5, 0),
-            Size = UDim2.fromOffset(15, 15),
-            Image = tostring(icon),
+            Size = UDim2.fromOffset(16, 16),
             ImageColor3 = Theme.SubText,
         })
+        Library:ApplyIcon(icon_image, icon, ui_icon_options(16))
     end
 
     local title_label = label(button, title, 13, 'semi', Theme.SubText)
@@ -2969,7 +3392,7 @@ function Window:_build_settings_tab()
         return self.SettingsTab
     end
 
-    local tab = self:Tab({ Title = 'settings', Icon = 'rbxassetid://6031280882' })
+    local tab = self:Tab({ Title = 'settings', Icon = 'settings' })
     self.SettingsTab = tab
 
     local interface = tab:Section({ Title = 'interface', Side = 'left' })

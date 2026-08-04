@@ -14,11 +14,15 @@ local Window = Centrl:Window({
     Folder = 'centrl',
     ToggleKey = Enum.KeyCode.RightShift,
     Accent = Color3.fromRGB(227, 255, 42),
+
+    -- Lucide icon API (github.com/iamdookie1/web3). Point this at your own
+    -- deployment; tab icons then take Lucide names like 'crosshair'.
+    IconApi = 'https://web3-six-beta.vercel.app',
 })
 
 --// Legit -------------------------------------------------------------------
 
-local Legit = Window:Tab({ Title = 'legit', Icon = 'rbxassetid://6034509993' })
+local Legit = Window:Tab({ Title = 'legit', Icon = 'crosshair' })
 
 local Aimbot = Legit:Section({ Title = 'aimbot', Side = 'left' })
 
@@ -87,7 +91,7 @@ Checks:Colorpicker({
 
 --// Visuals -----------------------------------------------------------------
 
-local Visuals = Window:Tab({ Title = 'visuals', Icon = 'rbxassetid://6034684949' })
+local Visuals = Window:Tab({ Title = 'visuals', Icon = 'eye' })
 
 local Esp = Visuals:Section({ Title = 'players', Side = 'left' })
 
@@ -114,7 +118,7 @@ World:Button({
 
 --// Misc --------------------------------------------------------------------
 
-local Misc = Window:Tab({ Title = 'misc', Icon = 'rbxassetid://6035047377' })
+local Misc = Window:Tab({ Title = 'misc', Icon = 'wrench' })
 
 local Movement = Misc:Section({ Title = 'movement', Side = 'left' })
 
