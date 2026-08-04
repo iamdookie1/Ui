@@ -3,6 +3,11 @@
 A code-built recreation of the Centrl panel, with mobile support. Independent of
 `Library.lua` — the two libraries share nothing and can be loaded side by side.
 
+Dark theme with a deliberately layered palette — background, rail, topbar,
+section, element and element-hover are all visibly distinct steps rather than
+one flat dark grey — plus a faint top-down gradient sheen on the topbar and the
+window's own base fill, so surfaces read as lit rather than painted flat.
+
 ```lua
 local Centrl = loadstring(game:HttpGet('https://raw.githubusercontent.com/iamdookie1/Ui/main/Lib2.lua'))()
 
@@ -124,6 +129,26 @@ Results are cached per name + size + stroke + padding, so calling the same icon 
 the same options twice — including the automatic tab/control sizing above — costs
 one fetch, not two.
 
+### Live changes
+
+`Library.Icons` is a live proxy, not a plain table: writing any key on it —
+`Size`, `StrokeWidth`, `Padding`, `Enabled`, `BaseUrl` (directly or via
+`SetIconSource`) — restyles every icon already on screen on the spot, deferred one
+frame so setting several in a row costs one refresh pass, not one per assignment.
+Nothing needs the script rerun for a setting change to show up:
+
+```lua
+Centrl.Icons.Size = 96          -- every icon that relies on the default re-fetches at 96px
+Centrl.Icons.Enabled = false    -- every Lucide-backed icon on screen blanks immediately
+Centrl.Icons.Enabled = true     -- ...and comes back, re-fetching whatever it needs
+Centrl:SetIconSource('https://my-fork.vercel.app')  -- everything switches deployment live
+```
+
+Every target `ApplyIcon` has ever touched is remembered (weakly — a destroyed
+target just falls out on its own) specifically so this works, including the
+panel's own tabs, topbar logo, minimise/close and mobile button — they all repaint
+along with anything your own script applied an icon to.
+
 Fetching happens on the client — an executor has HTTP there, so there's no
 `RemoteFunction` hop like the `roblox/LucideIcons.lua` module in that repo needs.
 It needs `AssetService:CreateEditableImage`; where that's unavailable, or when the
@@ -165,6 +190,18 @@ lands), a scale change, a viewport resize. Nothing can put the panel off-screen
 even momentarily, because there's no path that changes its size or position without
 also running the clamp immediately afterward. The floating mobile button is wired
 the same way. Neither can end up off screen, instantly or otherwise.
+
+### Show / hide
+
+Showing and hiding the whole panel (the toggle key, the mobile button, `x`,
+`Window:SetVisible`) is a fade + scale "pop" on an inner layer, kept entirely
+separate from the outer frame that `SetOpen` (minimise) resizes and that
+`ClampToScreen` measures. Earlier builds ran both through the same size tween, so
+opening the panel meant visibly shrinking it down into its own topbar and then
+growing it back out — closing looked like the window was being crushed flat. Now
+the window's footprint never changes on show/hide at all: it just fades and scales
+in place, in whatever expanded or minimised state it already had, so minimising
+and then closing don't fight over the same animation.
 
 ## Mobile
 

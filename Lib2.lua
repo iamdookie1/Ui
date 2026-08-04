@@ -72,18 +72,22 @@ local Library = {
     Accent = Color3.fromRGB(227, 255, 42),
 }
 
+-- A deeper, cooler-toned dark palette with more distinct elevation steps
+-- (Background < Rail < Topbar < Section < Element < ElementHover) than a flat
+-- "everything's dark grey" panel — that's what actually reads as depth rather
+-- than just "darker".
 Library.Theme = {
-    Background = Color3.fromRGB(16, 16, 16),
-    Topbar = Color3.fromRGB(20, 20, 20),
-    Rail = Color3.fromRGB(18, 18, 18),
-    Section = Color3.fromRGB(23, 23, 23),
-    Element = Color3.fromRGB(29, 29, 29),
-    ElementHover = Color3.fromRGB(36, 36, 36),
-    Stroke = Color3.fromRGB(38, 38, 38),
-    StrokeSoft = Color3.fromRGB(30, 30, 30),
-    Text = Color3.fromRGB(232, 232, 232),
-    SubText = Color3.fromRGB(140, 143, 159),
-    Dim = Color3.fromRGB(96, 96, 96),
+    Background = Color3.fromRGB(9, 9, 11),
+    Topbar = Color3.fromRGB(13, 13, 16),
+    Rail = Color3.fromRGB(11, 11, 13),
+    Section = Color3.fromRGB(15, 15, 18),
+    Element = Color3.fromRGB(21, 21, 25),
+    ElementHover = Color3.fromRGB(29, 29, 34),
+    Stroke = Color3.fromRGB(33, 33, 39),
+    StrokeSoft = Color3.fromRGB(22, 22, 26),
+    Text = Color3.fromRGB(237, 237, 240),
+    SubText = Color3.fromRGB(148, 150, 163),
+    Dim = Color3.fromRGB(98, 99, 110),
     Success = Color3.fromRGB(126, 217, 87),
     Warning = Color3.fromRGB(255, 196, 87),
     Error = Color3.fromRGB(255, 96, 106),
@@ -217,6 +221,11 @@ end
 local QUAD = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local QUART = TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 local QUINT = TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+-- A slight overshoot-then-settle, used only for the show/hide pop — it's what
+-- makes that transition read as a deliberate "arrival" rather than a linear
+-- fade, without being slow enough to feel laggy.
+local POP_IN = TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local POP_OUT = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 
 --// Connection bookkeeping --------------------------------------------------
 
@@ -384,7 +393,26 @@ end
 
 local AssetService = cloneref(game:GetService('AssetService'))
 
-Library.Icons = {
+-- Every ImageLabel/ImageButton a Lucide icon has been applied to, so a later
+-- change to Icons.Size/StrokeWidth/Padding/Enabled or the source deployment
+-- can restyle whatever's already on screen instead of only affecting the
+-- next icon that happens to get fetched — no rerun of the script needed.
+-- Weak-keyed so a destroyed target falls out on its own.
+local icon_targets = setmetatable({}, { __mode = 'k' })
+local icon_refresh_queued = false
+
+local function queue_icon_refresh()
+    if icon_refresh_queued then
+        return
+    end
+    icon_refresh_queued = true
+    task.defer(function()
+        icon_refresh_queued = false
+        Library:RefreshIcons()
+    end)
+end
+
+local icon_settings = {
     BaseUrl = 'https://web3-six-beta.vercel.app',
     Size = 64,
     StrokeWidth = 2,
@@ -392,10 +420,49 @@ Library.Icons = {
     Enabled = true,
 }
 
+-- A live proxy: writing Icons.Size (or any other key) — directly, or through
+-- SetIconSource/SetScale-style setters — takes effect on every icon already
+-- applied, deferred one frame so setting several properties in a row costs
+-- one refresh pass instead of one per assignment.
+Library.Icons = setmetatable({}, {
+    __index = icon_settings,
+    __newindex = function(_, key, value)
+        if icon_settings[key] == value then
+            return
+        end
+        icon_settings[key] = value
+        if key == 'BaseUrl' then
+            -- Cache keys don't include the source deployment, so a stale
+            -- entry fetched from the old one has to go rather than be reused.
+            Library:ClearIconCache()
+        elseif key == 'Enabled' and value == false then
+            for target in pairs(icon_targets) do
+                if typeof(target) == 'Instance' and target.Parent then
+                    target.Image = ''
+                end
+            end
+        end
+        queue_icon_refresh()
+    end,
+})
+
 function Library:SetIconSource(url)
     if typeof(url) == 'string' and url ~= '' then
         Library.Icons.BaseUrl = (string.gsub(url, '/+$', ''))
-        Library:ClearIconCache()
+    end
+end
+
+-- Re-fetches (cache permitting) and re-applies every icon currently on
+-- screen with whatever its own call originally asked for, picking up any
+-- Icons.* changes made since. Called automatically whenever Icons.* changes;
+-- safe to call by hand too.
+function Library:RefreshIcons()
+    for target, entry in pairs(icon_targets) do
+        if typeof(target) == 'Instance' and target.Parent then
+            Library:ApplyIcon(target, entry.name, entry.options)
+        else
+            icon_targets[target] = nil
+        end
     end
 end
 
@@ -625,13 +692,19 @@ function Library:ApplyIcon(target, icon, options)
     end
     local text = tostring(icon)
     if string.match(text, '^%d+$') then
+        icon_targets[target] = nil
         target.Image = 'rbxassetid://' .. text
         return
     end
     if is_direct_asset(text) then
+        icon_targets[target] = nil
         target.Image = text
         return
     end
+    -- Remembered even while disabled, so flipping Icons.Enabled back on
+    -- later picks this target up on its own — its original call site never
+    -- has to run again.
+    icon_targets[target] = { name = text, options = options }
     if not Library.Icons.Enabled then
         return
     end
@@ -1167,24 +1240,41 @@ function Library:Window(options)
             math.max(0, math.round((viewport.X - WINDOW_WIDTH * Library._scale) / 2)),
             math.max(0, math.round((viewport.Y - WINDOW_HEIGHT * Library._scale) / 2))),
         Size = UDim2.fromOffset(WINDOW_WIDTH, WINDOW_HEIGHT),
-        BackgroundColor3 = Theme.Background,
         BackgroundTransparency = 1,
         ClipsDescendants = false,
         Visible = false,
     })
     register_scale(create('UIScale', { Parent = root }))
-    corner(root, 8)
-    local root_stroke = stroke(root, Theme.Stroke, 1)
 
     self.Root = root
 
+    -- `root` only ever carries position/size (drag, clamp, minimise) and the
+    -- viewport-fit UIScale — it never fades or scales itself. Show/hide is a
+    -- fade+pop on `shell` instead, driven by its own nested UIScale, so
+    -- opening/closing the panel no longer means visibly shrinking it down
+    -- into its own topbar before it can vanish. Centre-anchored so the pop
+    -- scales toward the middle of the window rather than its corner.
+    local shell = create('Frame', {
+        Name = 'shell',
+        Parent = root,
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(0.5, 0, 0.5, 0),
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundColor3 = Theme.Background,
+        BackgroundTransparency = 1,
+        ClipsDescendants = false,
+    })
+    local pop_scale = create('UIScale', { Parent = shell, Scale = 0.94 })
+    corner(shell, 8)
+    local root_stroke = stroke(shell, Theme.Stroke, 1)
+
     local shadow = create('ImageLabel', {
         Name = 'shadow',
-        Parent = root,
+        Parent = shell,
         BackgroundTransparency = 1,
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.new(0.5, 0, 0.5, 0),
-        Size = UDim2.new(1, 60, 1, 60),
+        Size = UDim2.new(1, 70, 1, 70),
         Image = 'rbxassetid://6014261993',
         ImageColor3 = Color3.new(0, 0, 0),
         ImageTransparency = 1,
@@ -1195,12 +1285,28 @@ function Library:Window(options)
 
     local body = create('Frame', {
         Name = 'body',
-        Parent = root,
+        Parent = shell,
         BackgroundTransparency = 1,
         Size = UDim2.new(1, 0, 1, 0),
         ClipsDescendants = true,
     })
     corner(body, 8)
+
+    -- A faint vertical gradient on the window's own base fill: a touch
+    -- lighter at the top, settling to the flat theme colour by mid-height.
+    -- It's a UIGradient on the existing background rather than an overlay
+    -- frame, so there's no extra layer to fight z-index or input-blocking
+    -- over — it just reads as light catching the top of the panel instead
+    -- of one dead-flat fill.
+    create('UIGradient', {
+        Parent = shell,
+        Rotation = 90,
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(24, 24, 29)),
+            ColorSequenceKeypoint.new(0.4, Theme.Background),
+            ColorSequenceKeypoint.new(1, Theme.Background),
+        }),
+    })
 
     --// Topbar --------------------------------------------------------------
 
@@ -1212,6 +1318,14 @@ function Library:Window(options)
         BorderSizePixel = 0,
     })
     corner(topbar, 8)
+    create('UIGradient', {
+        Parent = topbar,
+        Rotation = 90,
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(28, 28, 34)),
+            ColorSequenceKeypoint.new(1, Theme.Topbar),
+        }),
+    })
     create('Frame', {
         Parent = topbar,
         BackgroundColor3 = Theme.Topbar,
@@ -1582,6 +1696,8 @@ function Library:Window(options)
         end
     end))
 
+    self.Shell = shell
+    self.PopScale = pop_scale
     self.Shadow = shadow
     self.RootStroke = root_stroke
     self.Topbar = topbar
@@ -1641,21 +1757,27 @@ function Window:SetOpen(state)
     -- Collapse to just the topbar, the original's minimise behaviour. The
     -- top-left anchor means the header stays put through both directions;
     -- the AbsoluteSize-changed connection clamps continuously as it resizes.
+    -- This only ever touches `root`'s Size — showing/hiding the whole panel
+    -- (SetVisible) is a separate fade+pop on `shell` that never resizes
+    -- anything, so minimising and closing can't be confused with each other.
     self.Open = state and true or false
     local height = self.Open and WINDOW_HEIGHT or TOPBAR_HEIGHT
     tween(self.Root, QUINT, { Size = UDim2.fromOffset(WINDOW_WIDTH, height) })
     self:_sync_minimise_icon()
 end
 
+-- Showing/hiding the panel is a fade + scale "pop" on `shell`, entirely
+-- separate from `root`'s Size (which SetOpen alone controls). Previously
+-- showing the panel forcibly shrank it down to the topbar and grew it back
+-- out every time — it looked like the window was being crushed into its own
+-- header before it could appear. Now the window's actual footprint never
+-- changes on show/hide: it just fades and scales in place, in whatever
+-- expanded/minimised state it already had.
 function Window:_animate_in()
-    local root = self.Root
-    -- Grows from the topbar back to whatever height it's actually supposed to
-    -- be at (self.Open may be true or false — it's whatever it was left at
-    -- before the panel was hidden, not forced open every time it's shown).
-    local target_height = self.Open and WINDOW_HEIGHT or TOPBAR_HEIGHT
-    root.Size = UDim2.fromOffset(WINDOW_WIDTH, TOPBAR_HEIGHT)
-    root.BackgroundTransparency = 1
-    tween(root, QUINT, { Size = UDim2.fromOffset(WINDOW_WIDTH, target_height), BackgroundTransparency = 0 })
+    self.PopScale.Scale = 0.94
+    self.Shell.BackgroundTransparency = 1
+    tween(self.PopScale, POP_IN, { Scale = 1 })
+    tween(self.Shell, POP_IN, { BackgroundTransparency = 0 })
     tween(self.RootStroke, QUART, { Transparency = 0 })
     tween(self.Shadow, QUART, { ImageTransparency = 0.55 })
     tween(self.Logo, QUART, { ImageTransparency = 0 })
@@ -1664,19 +1786,16 @@ function Window:_animate_in()
 end
 
 function Window:_animate_out()
-    local root = self.Root
-    -- Only the topbar itself needs to stay visible while hidden, so the next
-    -- _animate_in always grows from the same TOPBAR_HEIGHT starting point
-    -- regardless of whether the panel was expanded or minimised when closed.
-    tween(root, QUART, { Size = UDim2.fromOffset(WINDOW_WIDTH, TOPBAR_HEIGHT), BackgroundTransparency = 1 })
-    tween(self.RootStroke, QUAD, { Transparency = 1 })
-    tween(self.Shadow, QUAD, { ImageTransparency = 1 })
-    tween(self.Logo, QUAD, { ImageTransparency = 1 })
-    tween(self.TitleLabel, QUAD, { TextTransparency = 1 })
-    tween(self.SubtitleLabel, QUAD, { TextTransparency = 1 })
-    task.delay(0.28, function()
-        if not self.Visible then
-            root.Visible = false
+    tween(self.PopScale, POP_OUT, { Scale = 0.94 })
+    tween(self.Shell, POP_OUT, { BackgroundTransparency = 1 })
+    tween(self.RootStroke, POP_OUT, { Transparency = 1 })
+    tween(self.Shadow, POP_OUT, { ImageTransparency = 1 })
+    tween(self.Logo, POP_OUT, { ImageTransparency = 1 })
+    tween(self.TitleLabel, POP_OUT, { TextTransparency = 1 })
+    tween(self.SubtitleLabel, POP_OUT, { TextTransparency = 1 })
+    task.delay(POP_OUT.Time + 0.03, function()
+        if not self.Visible and self.Root then
+            self.Root.Visible = false
         end
     end)
 end
