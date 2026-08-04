@@ -90,8 +90,11 @@ Fetching happens on the client — an executor has HTTP there, so there's no
 Icons are requested white and tinted with `ImageColor3`, so one fetch serves every
 accent. It needs `AssetService:CreateEditableImage`; where that's unavailable, or
 when the API can't be reached, the icon is skipped with one warning and everything
-else still works. Set `Icons.BaseUrl`/`IconApi` to your own deployment — there is no
-public one.
+else still works.
+
+`Icons.BaseUrl` defaults to `https://web3-six-beta.vercel.app`, the deployment this
+library ships against. Point it elsewhere with `Icons.BaseUrl`/`IconApi` if you run
+your own.
 
 The topbar's own minimise (`chevron-up`/`chevron-down`, flips with state) and close
 (`x`) controls are Lucide icons too, not the placeholder text glyphs from the first

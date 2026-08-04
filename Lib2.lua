@@ -385,7 +385,7 @@ end
 local AssetService = cloneref(game:GetService('AssetService'))
 
 Library.Icons = {
-    BaseUrl = 'https://web3-iamdookie1.vercel.app',
+    BaseUrl = 'https://web3-six-beta.vercel.app',
     Size = 64,
     StrokeWidth = 2,
     Padding = 4,

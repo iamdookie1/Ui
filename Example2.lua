@@ -17,7 +17,7 @@ local Window = Centrl:Window({
 
     -- Lucide icon API (github.com/iamdookie1/web3). Point this at your own
     -- deployment; tab icons then take Lucide names like 'crosshair'.
-    IconApi = 'https://web3-iamdookie1.vercel.app',
+    IconApi = 'https://web3-six-beta.vercel.app',
 })
 
 --// Legit -------------------------------------------------------------------
