@@ -2418,6 +2418,302 @@ function Section:Slider(options)
     return api
 end
 
+--// Element: range slider --------------------------------------------------
+
+-- Two knobs on one track, for settings that are a span rather than a point:
+-- a delay picked randomly between 0.5s and 0.7s, a distance band an ESP should
+-- draw inside, a damage roll. The value is a table, `{ Min = , Max = }`, which
+-- survives the config round trip as-is because encode_flags copies tables
+-- through untouched.
+function Section:RangeSlider(options)
+    options = options or {}
+    local title = pick(options, 'Range', 'Title', 'title', 'Text')
+    local flag = pick(options, nil, 'Flag', 'flag')
+    local minimum = tonumber(pick(options, 0, 'Min', 'min', 'minimum_value', 'Minimum')) or 0
+    local maximum = tonumber(pick(options, 100, 'Max', 'max', 'maximum_value', 'Maximum')) or 100
+    local increment = tonumber(pick(options, 1, 'Increment', 'increment', 'round_number', 'Step')) or 1
+    local suffix = tostring(pick(options, '', 'Suffix', 'suffix', 'Unit'))
+    local separator = tostring(pick(options, ' - ', 'Separator', 'separator'))
+    local callback = pick(options, function() end, 'Callback', 'callback')
+    local ignore_saved = pick(options, false, 'IgnoreSaved', 'ignoresaved')
+
+    -- Defaults arrive either as two keys or as one table/pair, since
+    -- `Default = { 0.5, 0.7 }` is the shape people reach for first.
+    local default_low = pick(options, nil, 'DefaultMin', 'defaultmin', 'LowDefault', 'ValueMin')
+    local default_high = pick(options, nil, 'DefaultMax', 'defaultmax', 'HighDefault', 'ValueMax')
+    local default_pair = pick(options, nil, 'Default', 'default', 'Value', 'value')
+    if typeof(default_pair) == 'table' then
+        default_low = default_low or default_pair.Min or default_pair.min or default_pair[1]
+        default_high = default_high or default_pair.Max or default_pair.max or default_pair[2]
+    end
+    default_low = tonumber(default_low) or minimum
+    default_high = tonumber(default_high) or maximum
+
+    local bar_height = is_touch() and 8 or 6
+    local holder = create('Frame', {
+        Name = 'rangeframe',
+        Parent = self.Container,
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, (is_touch() and 44 or 38)),
+        LayoutOrder = self:_next(),
+    })
+
+    local title_label = label(holder, title, 12, nil, Theme.SubText)
+    title_label.Name = 'title'
+    title_label.Size = UDim2.new(1, -110, 0, 16)
+
+    -- Wider than the plain slider's readout: this one holds two numbers.
+    local value_label = label(holder, '', 12, 'semi', Theme.Text)
+    value_label.Name = 'value'
+    value_label.AnchorPoint = Vector2.new(1, 0)
+    value_label.Position = UDim2.new(1, 0, 0, 0)
+    value_label.Size = UDim2.new(0, 110, 0, 16)
+    value_label.TextXAlignment = Enum.TextXAlignment.Right
+
+    local track_hitbox = create('TextButton', {
+        Name = 'hitbox',
+        Parent = holder,
+        BackgroundTransparency = 1,
+        AnchorPoint = Vector2.new(0, 1),
+        Position = UDim2.new(0, 0, 1, 0),
+        Size = UDim2.new(1, 0, 0, is_touch() and 22 or 16),
+        Text = '',
+        AutoButtonColor = false,
+    })
+
+    local bar = create('Frame', {
+        Name = 'bar',
+        Parent = track_hitbox,
+        BackgroundColor3 = Theme.Element,
+        AnchorPoint = Vector2.new(0, 0.5),
+        Position = UDim2.new(0, 0, 0.5, 0),
+        Size = UDim2.new(1, 0, 0, bar_height),
+    })
+    corner(bar, 3)
+    stroke(bar, Theme.Stroke)
+
+    -- The accent sits between the two knobs rather than running from the left
+    -- edge, so the bar reads as "this span is selected".
+    local fill = accent(create('Frame', {
+        Name = 'slide',
+        Parent = bar,
+        BackgroundColor3 = Library.Accent,
+        Size = UDim2.new(0, 0, 1, 0),
+    }), { 'BackgroundColor3' })
+    corner(fill, 3)
+
+    local function make_knob(name)
+        local knob = create('Frame', {
+            Name = name,
+            Parent = bar,
+            BackgroundColor3 = Theme.Text,
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(0, 0, 0.5, 0),
+            Size = UDim2.fromOffset(is_touch() and 14 or 10, is_touch() and 14 or 10),
+            ZIndex = 2,
+        })
+        corner(knob, 20)
+        return knob
+    end
+
+    local low_knob = make_knob('knob_min')
+    local high_knob = make_knob('knob_max')
+
+    local api = {}
+
+    local function round(number)
+        if increment <= 0 then
+            return number
+        end
+        local rounded = math.floor((number - minimum) / increment + 0.5) * increment + minimum
+        return tonumber(string.format('%.6f', rounded))
+    end
+
+    local low = math.clamp(round(default_low), minimum, maximum)
+    local high = math.clamp(round(default_high), minimum, maximum)
+    if low > high then
+        low, high = high, low
+    end
+
+    local function alpha_of(number)
+        if maximum == minimum then
+            return 0
+        end
+        return (number - minimum) / (maximum - minimum)
+    end
+
+    local function shown(number)
+        if increment >= 1 then
+            return math.round(number)
+        end
+        return number
+    end
+
+    local function paint()
+        local low_alpha = alpha_of(low)
+        local high_alpha = alpha_of(high)
+        tween(fill, QUAD, {
+            Position = UDim2.new(low_alpha, 0, 0, 0),
+            Size = UDim2.new(high_alpha - low_alpha, 0, 1, 0),
+        })
+        tween(low_knob, QUAD, { Position = UDim2.new(low_alpha, 0, 0.5, 0) })
+        tween(high_knob, QUAD, { Position = UDim2.new(high_alpha, 0, 0.5, 0) })
+        value_label.Text = tostring(shown(low)) .. separator .. tostring(shown(high)) .. suffix
+    end
+
+    function api:Set(new_low, new_high, silent)
+        -- Also accepts a single table, so :Set(Flags.foo) round-trips.
+        if typeof(new_low) == 'table' then
+            silent = new_high
+            local pair = new_low
+            new_low = pair.Min or pair.min or pair[1]
+            new_high = pair.Max or pair.max or pair[2]
+        end
+        local a = math.clamp(round(tonumber(new_low) or minimum), minimum, maximum)
+        local b = math.clamp(round(tonumber(new_high) or maximum), minimum, maximum)
+        if a > b then
+            a, b = b, a
+        end
+        low, high = a, b
+        paint()
+        if flag then
+            Library.Flags[flag] = { Min = low, Max = high }
+        end
+        if not silent then
+            task.spawn(function()
+                local ok, err = pcall(callback, low, high)
+                if not ok then
+                    warn('[centrl] range slider callback error: ' .. tostring(err))
+                end
+            end)
+            if not ignore_saved then
+                autosave()
+            end
+        end
+    end
+
+    function api:SetMin(value, silent)
+        api:Set(value, high, silent)
+    end
+
+    function api:SetMax(value, silent)
+        api:Set(low, value, silent)
+    end
+
+    function api:Get()
+        return low, high
+    end
+
+    function api:GetRange()
+        return { Min = low, Max = high }
+    end
+
+    -- The reason a range control usually exists: pick a value inside it.
+    function api:Random()
+        if low == high then
+            return low
+        end
+        return low + math.random() * (high - low)
+    end
+
+    api.SetValue, api.set_value = api.Set, api.Set
+
+    local dragging = nil
+
+    local function alpha_from(input)
+        local absolute = bar.AbsolutePosition.X
+        local width = math.max(bar.AbsoluteSize.X, 1)
+        return math.clamp((input_position(input).X - absolute) / width, 0, 1)
+    end
+
+    local function update_from(input)
+        local value = minimum + alpha_from(input) * (maximum - minimum)
+        if dragging == 'low' then
+            api:Set(math.min(value, high), high)
+        else
+            api:Set(low, math.max(value, low))
+        end
+    end
+
+    -- Which knob the press belongs to. Outside the span the answer is the side
+    -- you pressed on; inside it, the nearer knob. Both stacked on one spot is
+    -- the case that needs the explicit test, otherwise the pair would be stuck
+    -- there forever with no way to pull them apart.
+    local function pick_knob(input)
+        local alpha = alpha_from(input)
+        local low_alpha, high_alpha = alpha_of(low), alpha_of(high)
+        if alpha < low_alpha then
+            return 'low'
+        elseif alpha > high_alpha then
+            return 'high'
+        elseif math.abs(alpha - low_alpha) <= math.abs(alpha - high_alpha) then
+            return 'low'
+        end
+        return 'high'
+    end
+
+    local function grow(knob)
+        tween(knob, QUAD, { Size = UDim2.fromOffset(is_touch() and 18 or 13, is_touch() and 18 or 13) })
+    end
+
+    local function shrink(knob)
+        tween(knob, QUAD, { Size = UDim2.fromOffset(is_touch() and 14 or 10, is_touch() and 14 or 10) })
+    end
+
+    track(track_hitbox.InputBegan:Connect(function(input)
+        if not is_press(input) then
+            return
+        end
+        if not claim_drag(api) then
+            return
+        end
+        dragging = pick_knob(input)
+        grow(dragging == 'low' and low_knob or high_knob)
+        update_from(input)
+    end))
+
+    track(UserInputService.InputChanged:Connect(function(input)
+        if dragging and is_move(input) then
+            update_from(input)
+        end
+    end))
+
+    track(UserInputService.InputEnded:Connect(function(input)
+        if dragging and is_press(input) then
+            dragging = nil
+            release_drag(api)
+            shrink(low_knob)
+            shrink(high_knob)
+        end
+    end))
+
+    if flag and not ignore_saved then
+        register_flag(flag, { Min = low, Max = high }, function(value)
+            api:Set(value, nil, false)
+        end)
+        local saved = Library.Flags[flag]
+        if typeof(saved) == 'table' then
+            local a = tonumber(saved.Min or saved.min or saved[1])
+            local b = tonumber(saved.Max or saved.max or saved[2])
+            if a and b then
+                low = math.clamp(round(a), minimum, maximum)
+                high = math.clamp(round(b), minimum, maximum)
+                if low > high then
+                    low, high = high, low
+                end
+            end
+        end
+    elseif flag then
+        Library.Flags[flag] = { Min = low, Max = high }
+    end
+
+    paint()
+    task.spawn(function()
+        pcall(callback, low, high)
+    end)
+    return api
+end
+
 --// Element: textbox --------------------------------------------------------
 
 function Section:Textbox(options)
@@ -3376,6 +3672,9 @@ Section.Color = Section.Colorpicker
 Section.create_toggle = Section.Toggle
 Section.create_checkbox = Section.Toggle
 Section.create_slider = Section.Slider
+Section.create_rangeslider = Section.RangeSlider
+Section.create_range_slider = Section.RangeSlider
+Section.Range = Section.RangeSlider
 Section.create_dropdown = Section.Dropdown
 Section.create_textbox = Section.Textbox
 Section.create_button = Section.Button

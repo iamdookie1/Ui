@@ -52,6 +52,7 @@ All live on a Section and all accept `Title`, `Flag` and `Callback`.
 |---|---|
 | `Section:Toggle{}` | `Default` |
 | `Section:Slider{}` | `Min`, `Max`, `Increment`, `Default`, `Suffix` |
+| `Section:RangeSlider{}` | `Min`, `Max`, `Increment`, `Default`, `Suffix` — two knobs, one track |
 | `Section:Dropdown{}` | `Options`, `Default`, `Multi`; `:SetOptions{}` |
 | `Section:Textbox{}` | `Placeholder`, `Default`, `ClearOnFocus` |
 | `Section:Keybind{}` | `Default`, `ChangedCallback` |
@@ -61,6 +62,37 @@ All live on a Section and all accept `Title`, `Flag` and `Callback`.
 
 Every element returns a manager with `:Set(value)` and `:Get()`. Pass
 `IgnoreSaved = true` to keep an element out of the config file.
+
+### Range slider
+
+For a setting that is a span rather than a point — a delay picked somewhere
+between 0.5s and 0.7s, a distance band, a damage roll:
+
+```lua
+local delay = Section:RangeSlider({
+    Title = 'shot delay',
+    Flag = 'aim_delay',
+    Min = 0, Max = 2, Increment = 0.05,
+    Default = { 0.5, 0.7 },   -- or DefaultMin = 0.5, DefaultMax = 0.7
+    Suffix = 's',
+    Callback = function(low, high) end,
+})
+
+delay:Get()        --> 0.5, 0.7
+delay:GetRange()   --> { Min = 0.5, Max = 0.7 }
+delay:Random()     --> a number inside the span
+delay:Set(0.4, 0.9)
+delay:SetMin(0.4)  -- moves one edge, leaves the other
+```
+
+The knobs cannot cross: dragging one past the other stops it at its partner.
+Grab anywhere on the track and the nearer knob comes to you; press outside the
+span and the knob on that side moves, which is also how two knobs sitting on the
+same value get pulled back apart.
+
+`Flags[flag]` holds `{ Min = , Max = }`, and that table saves and loads with the
+rest of the config. `:Set()` accepts the same table, so `slider:Set(Flags.aim_delay)`
+works directly.
 
 Option keys are read case-insensitively across common spellings (`Title`/`title`,
 `Callback`/`callback`, `Min`/`minimum_value`, …), and the old lowercase call names
