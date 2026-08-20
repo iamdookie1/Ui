@@ -53,6 +53,19 @@ Aimbot:Slider({
     Default = 120,
 })
 
+Aimbot:RangeSlider({
+    Title = 'shot delay',
+    Flag = 'aim_delay',
+    Min = 0,
+    Max = 2,
+    Increment = 0.05,
+    Default = { 0.5, 0.7 },
+    Suffix = 's',
+    Callback = function(low, high)
+        print('delay between', low, 'and', high)
+    end,
+})
+
 Aimbot:Dropdown({
     Title = 'target part',
     Flag = 'aim_part',
